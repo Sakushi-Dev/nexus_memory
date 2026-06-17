@@ -84,7 +84,7 @@ A handful of fields are constrained at the schema level — e.g. `IngestRequest.
 and `RuleRequest.priority` are `Field(..., ge=1, le=10)`; `ForgetRequest` enforces
 **exactly one** of `fact_id` / `query` via a model validator; `RuleRequest` requires
 `directive` for `op="add"` and `rule_id` for `op="deactivate"`. The full per-field tables
-live in the [API reference](../usage/api-reference.md#processpayload--every-action).
+live in the [API reference](../usage/api-reference.md#action-index).
 
 ---
 
