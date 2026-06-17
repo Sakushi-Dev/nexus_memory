@@ -102,6 +102,8 @@ Two `process()` actions are added by the layer, validated by the layer's own req
 | `pending_summaries` | `{ "limit"?: int }` | `{status, jobs:[job, ...]}` (oldest-first) |
 | `submit_summary` | `{ job_id, summary }` | `{status:"success" \| "superseded" \| "not_found", applied?:"daily" \| "section"}` |
 
+`NexusMemory.drain_diary(run_job)` is the one-call host-side drain: it wraps the `pending_summaries()` + `submit_summary()` loop, calling `run_job(job)` per job and applying each non-empty result (returns the count applied, `0` when the layer is off). The module still never calls an LLM — `run_job` is the host's model.
+
 ### The job object the host receives
 
 Built by `DiaryLayer._to_handoff` ([`layer.py`](../../src/nexus_memory/layers/diary/layer.py)):

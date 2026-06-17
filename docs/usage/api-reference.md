@@ -470,6 +470,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 | `distill()` | `{"status": "success", "promoted": [...]}` | Promote facts → rules. |
 | `pending_summaries(limit=None)` | `list[dict]` **or** error dict | Diary outbox jobs (handoff shape above). Error dict when the diary is off. |
 | `submit_summary(job_id, summary)` | `{"status", "applied"}` or error dict | Apply a model summary. Error dict when the diary is off. |
+| `drain_diary(run_job)` | `int` | One-call diary drain: loops `pending_summaries()` + `submit_summary()` for you, calling the host callable `run_job(job: dict) -> str` per job and applying each non-empty result. Returns the number of jobs applied; returns `0` when the diary layer is off. Nexus still never calls an LLM — `run_job` is the host's model. |
 | `wait(timeout=None)` | `None` | Block until async ingests finish. Call before `assemble`/`close` in scripts. |
 | `close()` | `None` | Flush background writers, finalize the diary (if on), close the DB. Call in `try/finally`. (`close()` waits internally, so a prior `wait()` is redundant but safe.) |
 

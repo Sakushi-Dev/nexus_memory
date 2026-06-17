@@ -582,3 +582,73 @@ def test_diary_true_matches_default_config_knobs(tmp_path):
         )
     finally:
         mem.close()
+
+
+# --------------------------------------------------------------------------- #
+# 12. drain_diary — host-model outbox helper
+# --------------------------------------------------------------------------- #
+def test_drain_diary_enabled_applies_pending_jobs(db_path):
+    """With the diary ON, drain_diary runs a host model over the enqueued daily job.
+
+    Ingest N=3 interactions (the consolidator ticks the scheduler on each, using
+    the real UTC day that the freshly inserted turns carry), wait so the writes +
+    the diary tick complete, then drain. The deterministic model returns a derived
+    non-empty string per job; drain_diary applies it and reports the count.
+    """
+    mem = NexusMemory(db_path=db_path, diary=True)
+    try:
+        # N interactions cross the daily cadence boundary -> one pending daily job.
+        for i in range(N):
+            mem.process(
+                {
+                    "action": "ingest",
+                    "interaction": {"query": f"q{i}", "response": f"r{i}"},
+                }
+            )
+        mem.wait()
+
+        # A pending daily job exists before draining.
+        jobs = mem.pending_summaries()
+        assert any(j["kind"] == "daily" for j in jobs)
+        daily = next(j for j in jobs if j["kind"] == "daily")
+        day = daily["period"]
+
+        # Deterministic host model: derive a non-empty narrative from the job.
+        def model(job: dict) -> str:
+            return f"Narrative for {job['period']} ({job['job_id']})."
+
+        applied = mem.drain_diary(model)
+        assert applied >= 1
+
+        # The day's summary was actually set (via inspect + the diary store).
+        state = mem.inspect(type="diary")
+        assert state["status"] == "success"
+        day_row = next(d for d in state["data"]["days"] if d["period"] == day)
+        assert day_row["summary"] == f"Narrative for {day} ({daily['job_id']})."
+        assert mem._diary.store.get_day(day)["summary"] == day_row["summary"]
+
+        # Nothing is left pending after a successful drain.
+        assert mem.pending_summaries() == []
+    finally:
+        mem.close()
+
+
+def test_drain_diary_off_returns_zero_and_applies_nothing(db_path):
+    """With the diary OFF, drain_diary is a no-op returning 0 (never raises)."""
+    mem = NexusMemory(db_path=db_path)
+    try:
+        assert mem._diary is None
+
+        calls = []
+
+        def model(job: dict) -> str:
+            calls.append(job)
+            return "x"
+
+        assert mem.drain_diary(model) == 0
+        # The host model was never invoked because there is no diary to drain.
+        assert calls == []
+        # The lambda form from the task brief is likewise a no-op returning 0.
+        assert mem.drain_diary(lambda j: "x") == 0
+    finally:
+        mem.close()

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # type-only; never costs an import when the diary is unused
     from ..layers.diary.config import DiaryConfig
@@ -423,6 +423,27 @@ class NexusMemory:
         if self._diary is None:
             return {"status": "error", "error": "diary layer not enabled"}
         return self._diary.submit_summary(job_id, summary)
+
+    def drain_diary(self, run_job: "Callable[[dict], str]") -> int:
+        """Drain the diary's pending handoff jobs through a host model.
+
+        ``run_job`` is a host-supplied callable ``(job: dict) -> str`` where
+        ``job`` is a handoff job as returned by :meth:`pending_summaries`. For
+        each pending job it is invoked, and any non-empty string it returns is
+        folded back in via :meth:`submit_summary`. Returns the number of jobs
+        applied (0 when the diary layer is not enabled).
+
+        Nexus still never calls an LLM itself -- run_job is the host's model.
+        """
+        if self._diary is None:
+            return 0
+        applied = 0
+        for job in self._diary.pending_summaries():
+            text = run_job(job)
+            if text:
+                self.submit_summary(job["job_id"], text)
+                applied += 1
+        return applied
 
     def forget(self, **kw: Any) -> dict:
         """Convenience wrapper around :meth:`TransparencyInterface.forget`."""
