@@ -123,7 +123,7 @@ class NexusMemory:
         # Per-instance session id, used to tag episodic turns for this run.
         self.session_id: str = str(uuid.uuid4())
 
-        # Cognitive layers (v2 multi-layer architecture).
+        # Cognitive layers.
         #   I.   Working memory (volatile, RAM).
         #   II.  Episodic store (durable dialogue + diary).
         #   IV.  Procedural store (standing behavioral rules).

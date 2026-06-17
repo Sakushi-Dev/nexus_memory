@@ -1,4 +1,4 @@
-"""MS1: infrastructure — extension loading, schema, WAL, CRUD/KNN."""
+"""Infrastructure — extension loading, schema, WAL, CRUD/KNN."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def test_required_tables_exist(db):
 
 
 def test_wal_mode_enabled(db):
-    """PRAGMA journal_mode must report 'wal' (MS1.4)."""
+    """PRAGMA journal_mode must report 'wal'."""
     mode = db.conn.execute("PRAGMA journal_mode;").fetchone()[0]
     assert str(mode).lower() == "wal"
 

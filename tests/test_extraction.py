@@ -1,4 +1,4 @@
-"""MS4: fact extraction always yields JSON-valid (schema-validating) facts."""
+"""Fact extraction always yields JSON-valid (schema-validating) facts."""
 
 from __future__ import annotations
 

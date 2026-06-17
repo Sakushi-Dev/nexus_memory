@@ -1,4 +1,4 @@
-"""MS6.3: key derivation and graceful degradation when SQLCipher is absent."""
+"""Key derivation and graceful degradation when SQLCipher is absent."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""MS5: Pydantic request/response schemas and the parse_request dispatcher."""
+"""Pydantic request/response schemas and the parse_request dispatcher."""
 
 from __future__ import annotations
 

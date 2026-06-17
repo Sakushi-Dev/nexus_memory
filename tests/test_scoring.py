@@ -1,4 +1,4 @@
-"""MS2: pure scoring functions (similarity, decay, final score, rank)."""
+"""Pure scoring functions (similarity, decay, final score, rank)."""
 
 from __future__ import annotations
 

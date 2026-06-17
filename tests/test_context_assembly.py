@@ -9,8 +9,8 @@ action routes to it). They assert:
 * ONLY semantic facts carry ``id="..."`` and there are ``<= top_k`` of them;
 * the response exposes the superset keys (``directives``, ``recent_dialogue``,
   ``meta.directive_count``, ...);
-* backward compatibility — ``context_xml`` still contains ``<memory_context>``
-  and the semantic ``<fact id="..">`` elements, and ``raw_facts`` still carries
+* the context contract holds — ``context_xml`` contains ``<memory_context>``
+  and the semantic ``<fact id="..">`` elements, and ``raw_facts`` carries
   the recalled facts.
 
 Everything runs offline/deterministically: the default ``HashingEmbedder`` plus
@@ -26,7 +26,7 @@ import pytest
 
 from nexus_memory import NexusMemory
 
-# Matches the backward-compat needle test: only semantic facts carry id="..".
+# The needle invariant: only semantic facts carry id="..".
 _FACT_ID_RE = re.compile(r'<fact id="(\d+)"')
 
 NEEDLE = (
@@ -136,7 +136,7 @@ def test_only_semantic_facts_carry_id_and_count_capped(nexus):
 # superset response keys
 # --------------------------------------------------------------------------- #
 def test_response_has_superset_keys(nexus):
-    """assemble returns the v2 superset keys without dropping v1 ones."""
+    """assemble returns the full layer-aware superset of response keys."""
     _ingest(nexus, "antworte bitte auf deutsch", "Mach ich.")
     _ingest(nexus, "remember my favorite color", "Your favorite color is teal.")
 
@@ -144,11 +144,11 @@ def test_response_has_superset_keys(nexus):
         {"action": "assemble", "query": "what is my favorite color", "top_k": 5, "min_score": 0.0}
     )
 
-    # v1 keys (backward compatible).
+    # Base response keys.
     for key in ("status", "context_xml", "raw_facts", "meta", "latency_ms"):
-        assert key in res, f"missing backward-compat key {key!r}"
+        assert key in res, f"missing base key {key!r}"
 
-    # v2 superset keys.
+    # Layer-aware superset keys.
     assert isinstance(res["directives"], list)
     assert all(isinstance(d, str) for d in res["directives"])
     assert "Respond in German." in res["directives"]
@@ -190,9 +190,9 @@ def test_recent_dialogue_reflects_episodic_turns(nexus):
 
 
 # --------------------------------------------------------------------------- #
-# Backward compatibility
+# Context / fact structure
 # --------------------------------------------------------------------------- #
-def test_backward_compatible_memory_context_and_facts(nexus):
+def test_memory_context_and_facts_structure(nexus):
     """context_xml still has <memory_context> and the semantic <fact id="..">."""
     # User-centric semantics: the needle fact is a USER statement.
     _ingest(nexus, NEEDLE, "Got it.")

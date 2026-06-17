@@ -4,7 +4,7 @@ The diary owns its own config dataclass. Nothing here is added to
 :class:`~nexus_memory.core.config.NexusConfig`; the host opts in explicitly by
 passing ``NexusMemory(diary=DiaryConfig(enabled=True, ...))``. When the layer is
 off (``enabled=False``, the default), the layer is never constructed and no diary
-tables are created — the 141 existing tests stay green.
+tables are created and existing behavior is unchanged.
 
 Parameters: N=update_every=3, SECTION_SIZE=7, M=max_sections=8,
 K=inject_days=1.

@@ -19,7 +19,7 @@ three layer sections inside a single ``<memory_context>`` document::
       </recent_dialogue>
     </memory_context>
 
-Only the semantic facts carry ``id="..."`` (the backward-compatible needle test
+Only the semantic facts carry ``id="..."`` (the needle test
 greps ``<fact id="(\\d+)"`` and asserts ``<= top_k`` of them). Procedural rules
 use ``<directive priority="..">`` and recent turns use ``<turn role="..">``. All
 text is XML-escaped via :func:`xml.sax.saxutils.escape`; attribute values via
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Pulls the inner ``<fact .../>`` lines out of the reader's rendered block so we
 # can re-nest them under ``<semantic>`` without re-rendering (preserves the exact
-# id/importance/score/timestamp attributes the backward-compat test relies on).
+# id/importance/score/timestamp attributes the needle test relies on).
 _FACT_LINE_RE = re.compile(r"<fact\b[^>]*>.*?</fact>", re.DOTALL)
 
 
@@ -102,7 +102,7 @@ class ContextAssembler:
             request: Dict with ``query`` and optional ``top_k`` / ``min_score``.
 
         Returns:
-            A backward-compatible superset response::
+            A superset response::
 
                 {"status", "context_xml", "raw_facts",
                  "directives": [str],

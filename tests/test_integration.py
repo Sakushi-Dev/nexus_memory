@@ -1,4 +1,4 @@
-"""MS6.4: holistic "needle-in-a-haystack" validation.
+"""Holistic "needle-in-a-haystack" validation.
 
 Bury a distinctive fact, ingest 100 distractors, then assemble a context for a
 query targeting the needle. The needle must appear in the top 3 facts of the

@@ -1,8 +1,8 @@
 """Persistence for the diary layer (Layer V) — the 3 tables + the outbox.
 
 :class:`DiaryStore` owns the three diary tables (``diary_days``,
-``persistent_sections``, ``summarization_jobs``). Following the v2 multi-layer
-pattern (see :class:`~nexus_memory.layers.episodic.episodic.EpisodicStore`), it
+``persistent_sections``, ``summarization_jobs``). Like the other layer stores
+(see :class:`~nexus_memory.layers.episodic.episodic.EpisodicStore`), it
 does NOT own the connection lifecycle — :class:`~nexus_memory.core.db.NexusDB`
 does. The store creates its own tables with ``CREATE TABLE IF NOT EXISTS`` on
 construction, using the shared connection (``db.conn``) under the shared,

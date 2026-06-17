@@ -1,4 +1,4 @@
-"""MS6.2: PII filter masks emails (and is wired into the writer path)."""
+"""PII filter masks emails (and is wired into the writer path)."""
 
 from __future__ import annotations
 

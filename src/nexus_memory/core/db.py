@@ -65,7 +65,7 @@ class NexusDB:
         self._conn: sqlite3.Connection | None = None
         # Shared write lock for all layer stores (semantic + episodic +
         # procedural). Re-entrant so a method holding it may call another that
-        # also acquires it. Used by the v2 multi-layer stores via ``with db.lock:``.
+        # also acquires it. Used by the layer stores via ``with db.lock:``.
         self.lock: threading.RLock = threading.RLock()
         self.initialize()
 

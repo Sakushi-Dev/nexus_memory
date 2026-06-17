@@ -1,4 +1,4 @@
-"""MS4: the default SpeakerAwareExtractor attributes facts and drops noise.
+"""The default SpeakerAwareExtractor attributes facts and drops noise.
 
 Regression for the misattribution seen in real chat use: the assistant's own
 utterances were stored speaker-less, so a downstream model later misremembered

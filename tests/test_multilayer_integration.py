@@ -1,6 +1,6 @@
 """End-to-end multi-layer integration (the German scenario).
 
-Reproduces the canonical scenario from the contract through the public
+Reproduces the canonical German-language scenario through the public
 :meth:`NexusMemory.process` surface only (plus the documented convenience
 wrappers):
 
@@ -128,7 +128,7 @@ def test_german_scenario_end_to_end(nexus):
     # ------------------------------------------------------------------ #
     for key in ("context_xml", "raw_facts", "meta", "latency_ms", "directives",
                 "recent_dialogue"):
-        assert key in res, f"missing backward-compatible response key: {key}"
+        assert key in res, f"missing expected response key: {key}"
 
     # Only semantic facts carry id="..."; the needle test greps exactly this and
     # asserts <= top_k of them.

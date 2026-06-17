@@ -84,7 +84,7 @@ class OptimizeRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# v2 multi-layer request models (episodic / procedural / distillation)
+# Multi-layer request models (episodic / procedural / distillation)
 # --------------------------------------------------------------------------- #
 
 

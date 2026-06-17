@@ -1,7 +1,6 @@
 """Optional database-encryption hook and key-derivation helpers.
 
-Encryption is deliberately kept **off the critical path** (see MS6.3 and
-``07-Local-Single-User-Optimization.md`` Section 7.2). The unencrypted core
+Encryption is deliberately kept **off the critical path**. The unencrypted core
 ships first; encryption is an opt-in layer that requires a SQLCipher-enabled
 SQLite driver which is fragile to build on Windows.
 

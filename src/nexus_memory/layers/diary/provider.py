@@ -8,7 +8,7 @@ built-in sections. It renders two bounded fragments inside ``<memory_context>``
 * ``<diary day="...">`` — the previous finalized day's narrative (K=1), and
 * ``<persistent_summary>`` — the live ring sections, chronological (newest-last).
 
-Neither element carries ``id="..."``, so the backward-compatible needle invariant
+Neither element carries ``id="..."``, so the needle invariant
 (``<fact id="(\\d+)"``) is preserved. Text is escaped via
 :func:`xml.sax.saxutils.escape` and attributes via
 :func:`xml.sax.saxutils.quoteattr`, exactly like ``core/context.py``.

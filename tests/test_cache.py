@@ -1,4 +1,4 @@
-"""MS3: semantic LRU cache (similarity matching, LRU eviction, thread safety)."""
+"""Semantic LRU cache (similarity matching, LRU eviction, thread safety)."""
 
 from __future__ import annotations
 

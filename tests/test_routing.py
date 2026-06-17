@@ -1,4 +1,4 @@
-"""MS2: orchestrator process() routing over the public dict/JSON API."""
+"""Orchestrator process() routing over the public dict/JSON API."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Inter-layer transfer / consolidation (Working -> Episodic/Semantic/Procedural).
 
-Per the v2 multi-layer contract (section 6), *consolidation* is the glue that
+*Consolidation* is the glue that
 fans a single interaction out across the cognitive layers. The semantic writer
 (:class:`~nexus_memory.writer.MemoryWriter`) already persists decontextualized
 fact vectors; the consolidators defined here run *after* those semantic writes,

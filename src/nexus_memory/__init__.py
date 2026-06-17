@@ -33,7 +33,7 @@ __all__ = [
     "FactExtractor",
     "SpeakerAwareExtractor",
     "MockFactExtractor",
-    # v2 multi-layer public surface
+    # Multi-layer public surface
     "WorkingMemory",
     "EpisodicStore",
     "ProceduralStore",
@@ -42,7 +42,7 @@ __all__ = [
     "DirectiveDetector",
     "MockDirectiveDetector",
     "ContextAssembler",
-    # v3 diary layer (optional Layer V)
+    # Diary layer (optional Layer V)
     "DiaryConfig",
     "DiaryLayer",
     "DiaryStore",
