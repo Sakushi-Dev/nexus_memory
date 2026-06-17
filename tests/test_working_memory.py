@@ -1,4 +1,4 @@
-"""Tests for Layer I — Working Memory (CONTRACT-v2 §3).
+"""Tests for Layer I — Working Memory.
 
 Validates the volatile, in-RAM ring buffer :class:`WorkingMemory`:
 ``add_turn`` / ``add_interaction``, newest-last ``recent`` ordering, eviction at

@@ -1,4 +1,4 @@
-"""CONTRACT-v2 §12 — end-to-end multi-layer integration (the German scenario).
+"""End-to-end multi-layer integration (the German scenario).
 
 Reproduces the canonical scenario from the contract through the public
 :meth:`NexusMemory.process` surface only (plus the documented convenience

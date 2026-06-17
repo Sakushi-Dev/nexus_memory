@@ -1,4 +1,4 @@
-"""CONTRACT-v2 section 6 — inter-layer consolidation + distillation.
+"""Inter-layer consolidation + distillation.
 
 These tests validate that a *single* ``ingest`` fans an interaction out across
 every relevant cognitive layer, and that :meth:`NexusMemory.distill` promotes a

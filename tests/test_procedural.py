@@ -1,4 +1,4 @@
-"""Tests for Layer IV — Procedural Memory (CONTRACT-v2 section 5).
+"""Tests for Layer IV — Procedural Memory.
 
 Covers:
 

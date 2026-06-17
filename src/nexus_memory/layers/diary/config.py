@@ -6,7 +6,7 @@ passing ``NexusMemory(diary=DiaryConfig(enabled=True, ...))``. When the layer is
 off (``enabled=False``, the default), the layer is never constructed and no diary
 tables are created — the 141 existing tests stay green.
 
-Parameters (CONTRACT-v3 §6): N=update_every=3, SECTION_SIZE=7, M=max_sections=8,
+Parameters: N=update_every=3, SECTION_SIZE=7, M=max_sections=8,
 K=inject_days=1.
 """
 

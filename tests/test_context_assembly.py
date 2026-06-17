@@ -1,4 +1,4 @@
-"""CONTRACT-v2 §7 — the unified, layer-aware ``<memory_context>`` assembler.
+"""The unified, layer-aware ``<memory_context>`` assembler.
 
 These tests validate :class:`~nexus_memory.context.ContextAssembler` through the
 public :class:`~nexus_memory.orchestrator.NexusMemory` surface (the ``assemble``
@@ -58,7 +58,7 @@ def _ingest(nexus: NexusMemory, query: str, response: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CONTRACT-v2 §7 — nesting + structure
+# nesting + structure
 # --------------------------------------------------------------------------- #
 def test_assemble_nests_three_layers_in_one_memory_context(nexus):
     """All three layer sections are nested inside exactly one <memory_context>."""
@@ -133,7 +133,7 @@ def test_only_semantic_facts_carry_id_and_count_capped(nexus):
 
 
 # --------------------------------------------------------------------------- #
-# CONTRACT-v2 §7 — superset response keys
+# superset response keys
 # --------------------------------------------------------------------------- #
 def test_response_has_superset_keys(nexus):
     """assemble returns the v2 superset keys without dropping v1 ones."""

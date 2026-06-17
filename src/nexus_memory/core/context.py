@@ -1,4 +1,4 @@
-"""Layer-aware retrieval — the unified ``<memory_context>`` (CONTRACT-v2 §7).
+"""Layer-aware retrieval — the unified ``<memory_context>``.
 
 :class:`ContextAssembler` is the read-path coordinator for the multi-layer
 cognitive memory system. It does **not** reimplement KNN/scoring: the semantic

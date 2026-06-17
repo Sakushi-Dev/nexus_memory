@@ -1,4 +1,4 @@
-"""The diary trigger state machine (CONTRACT-v3 §4).
+"""The diary trigger state machine.
 
 :class:`DiaryScheduler` is the heart of the diary layer. It runs entirely inside
 the existing consolidation step (via :class:`DiaryConsolidator`) and inside

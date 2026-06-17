@@ -1,6 +1,6 @@
 """Tests for Layer II — Episodic Memory (the diary / dialogue history).
 
-Validates CONTRACT-v2 section 4 against the real
+Validates the episodic layer against the real
 :class:`~nexus_memory.episodic.EpisodicStore` API:
 
 * ``log_interaction`` persists a user turn followed by an assistant turn;

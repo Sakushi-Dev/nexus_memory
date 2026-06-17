@@ -28,7 +28,7 @@ if TYPE_CHECKING:  # avoid an import cycle at runtime
 
 logger = logging.getLogger(__name__)
 
-# Idempotent DDL for this layer's three tables (CONTRACT-v3 §2). Created on
+# Idempotent DDL for this layer's three tables. Created on
 # construction, only ever when the diary layer is active.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS diary_days (
@@ -68,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON summarization_jobs(status, created
 
 
 class DiaryStore:
-    """Owns the diary layer's 3 tables and all of its SQL (CONTRACT-v3 §2).
+    """Owns the diary layer's 3 tables and all of its SQL.
 
     Reads use the shared connection directly; every write is guarded by
     ``db.lock`` so it is safe alongside the semantic writer's background thread,

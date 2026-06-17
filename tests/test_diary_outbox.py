@@ -1,4 +1,4 @@
-"""Tests for Layer V — the hierarchical Diary via the handoff outbox (CONTRACT-v3 §10).
+"""Tests for Layer V — the hierarchical Diary via the handoff outbox.
 
 These exercise the optional, provider-agnostic diary subsystem that lives entirely
 in ``layers/diary/``. Everything here is offline and deterministic:
@@ -15,7 +15,7 @@ Unit-level tests (2–7) build :class:`DiaryStore`/:class:`DiaryScheduler` direc
 the ``db`` fixture. Integration tests (1, 8, 9, 10) use the full
 ``NexusMemory(diary=DiaryConfig(enabled=True))``.
 
-The ten tests map one-to-one to the CONTRACT-v3 §10 required cases.
+The ten tests cover the required diary-outbox cases.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from nexus_memory.layers.diary.config import DiaryConfig
 from nexus_memory.layers.diary.scheduler import DiaryScheduler
 from nexus_memory.layers.diary.store import DiaryStore
 
-# CONTRACT-v3 parameters: N=3, SECTION_SIZE=7, M=8, K=1.
+# Diary parameters: N=3, SECTION_SIZE=7, M=8, K=1.
 N = 3
 SECTION_SIZE = 7
 M = 8

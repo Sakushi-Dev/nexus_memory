@@ -1,4 +1,4 @@
-"""The diary's assemble hook (CONTRACT-v3 §5).
+"""The diary's assemble hook.
 
 :class:`DiaryContextProvider` plugs into the generic ``context_providers`` seam
 the :class:`~nexus_memory.core.context.ContextAssembler` iterates after its three

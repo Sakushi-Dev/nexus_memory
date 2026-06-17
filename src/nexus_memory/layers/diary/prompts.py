@@ -1,4 +1,4 @@
-"""Nexus-owned prompt templates for the diary outbox (CONTRACT-v3 §9).
+"""Nexus-owned prompt templates for the diary outbox.
 
 These are shipped verbatim inside each summarization job's ``prompt`` field; the
 host forwards them to whatever model it likes. The module never calls a model
