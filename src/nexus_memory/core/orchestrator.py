@@ -88,6 +88,11 @@ class NexusMemory:
         Optional :class:`~nexus_memory.procedural.DirectiveDetector` used to mine
         standing behavioral rules from interactions. Defaults to the offline,
         deterministic :class:`~nexus_memory.procedural.MockDirectiveDetector`.
+    diary:
+        Opt-in switch for the optional Layer V (hierarchical diary). Pass
+        ``diary=True`` for the defaults, or a
+        :class:`~nexus_memory.layers.diary.config.DiaryConfig` for custom knobs.
+        ``None``/``False`` (the default) leaves the layer off and unconstructed.
     """
 
     def __init__(
@@ -99,7 +104,7 @@ class NexusMemory:
         extractor: FactExtractor | None = None,
         summarizer: Summarizer | None = None,
         detector: DirectiveDetector | None = None,
-        diary: "DiaryConfig | None" = None,
+        diary: "DiaryConfig | bool | None" = None,
     ) -> None:
         # Build/override the config so db_path always reflects the argument.
         if config is None:
@@ -148,15 +153,19 @@ class NexusMemory:
             ProceduralConsolidator(self.procedural),
         ]
 
-        # Optional Layer V (diary). Built ONLY when an enabled DiaryConfig is
-        # passed; otherwise self._diary stays None and nothing is constructed
-        # (no tables, no provider, no routing) — byte-identical legacy behavior.
-        # The import is local so the diary package is never loaded when unused.
+        # Optional Layer V (diary). Built ONLY when the diary is opted in;
+        # otherwise self._diary stays None and nothing is constructed (no tables,
+        # no provider, no routing) — byte-identical legacy behavior. The import is
+        # local so the diary package is never loaded when unused.
+        #
+        # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
+        # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
         self._diary = None
-        if diary is not None and diary.enabled:
+        diary_config = self._resolve_diary_config(diary)
+        if diary_config is not None and diary_config.enabled:
             from ..layers.diary.layer import DiaryLayer
 
-            diary_layer = DiaryLayer(self.db, self.episodic, diary)
+            diary_layer = DiaryLayer(self.db, self.episodic, diary_config)
             # Append AFTER episodic+procedural so the diary consolidator runs last.
             self.consolidators.append(diary_layer.consolidator)
             self._diary = diary_layer
@@ -196,6 +205,26 @@ class NexusMemory:
             config.db_path,
             self.session_id,
         )
+
+    @staticmethod
+    def _resolve_diary_config(
+        diary: "DiaryConfig | bool | None",
+    ) -> "DiaryConfig | None":
+        """Normalize the ``diary`` argument into a ``DiaryConfig`` or ``None``.
+
+        Accepts a ``bool`` shorthand (``diary=True`` → ``DiaryConfig(enabled=True)``
+        with defaults, ``diary=False`` → ``None``) or a ``DiaryConfig`` (returned
+        as-is; its own ``enabled`` flag still gates construction). ``None`` stays
+        ``None``. The import is local so the diary package is never loaded when the
+        layer is unused.
+        """
+        if isinstance(diary, bool):
+            if not diary:
+                return None
+            from ..layers.diary.config import DiaryConfig
+
+            return DiaryConfig(enabled=True)
+        return diary
 
     # ------------------------------------------------------------------ #
     # public API

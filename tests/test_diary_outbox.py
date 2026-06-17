@@ -542,3 +542,43 @@ def test_resubmitting_done_job_is_safe_no_op(db_path):
         assert unknown["status"] == "not_found"
     finally:
         mem.close()
+
+
+# --------------------------------------------------------------------------- #
+# 11. activation via the bool shorthand
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "diary_arg, active",
+    [
+        (True, True),                       # bool shorthand → DiaryConfig(enabled=True)
+        (DiaryConfig(enabled=True), True),  # explicit enabled config
+        (False, False),                     # bool shorthand → off
+        (None, False),                      # default → off
+        (DiaryConfig(enabled=False), False),  # explicit disabled config
+    ],
+)
+def test_diary_arg_activation(tmp_path, diary_arg, active):
+    """`diary=True` activates Layer V exactly like `DiaryConfig(enabled=True)`."""
+    mem = NexusMemory(db_path=str(tmp_path / "a.db"), diary=diary_arg)
+    try:
+        assert (mem._diary is not None) is active
+        # When off, the convenience wrappers report the layer is not enabled.
+        if not active:
+            assert mem.pending_summaries()["status"] == "error"
+    finally:
+        mem.close()
+
+
+def test_diary_true_matches_default_config_knobs(tmp_path):
+    """The bool shorthand builds the layer with the documented default knobs."""
+    mem = NexusMemory(db_path=str(tmp_path / "b.db"), diary=True)
+    try:
+        cfg = mem._diary.config
+        assert (cfg.update_every, cfg.section_size, cfg.max_sections, cfg.inject_days) == (
+            N,
+            SECTION_SIZE,
+            M,
+            K,
+        )
+    finally:
+        mem.close()
