@@ -103,6 +103,14 @@ Every tunable, in one place.
 | [DiaryConfig](configuration/diary-config.md) | Layer V settings: `update_every`, `section_size`, `max_sections`, `inject_days`. |
 | [Tuning](configuration/tuning.md) | Practical guidance on scoring (`min_score`, `decay_lambda`, `default_top_k`) and dedup (`redundancy_threshold`). |
 
+### Changelog
+
+Release notes, newest first.
+
+| Page | Covers |
+|------|--------|
+| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.3.1](changelog/0.3.1.md). |
+
 ## Actions at a glance
 
 Every payload carries an `action`, passed to `memory.process(...)`. Full schemas live in [Request & response](io/request-response.md) and the [API reference](usage/api-reference.md).
