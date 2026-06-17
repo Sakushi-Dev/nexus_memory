@@ -9,7 +9,7 @@ description = "Nexus Memory Module — a local-first, SQLite-vec backed cognitiv
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Nexus Memory" }]
+authors = [{ name = "Sakushi-Dev", email = "chris_reiss@outlook.de" }]
 dependencies = [
     "sqlite-vec>=0.1.9",
     "pydantic>=2.12",
