@@ -14,9 +14,19 @@ A **local-first**, dependency-light agent-memory library for Python. It gives an
 
 ## Install
 
-Requires Python ≥ 3.11. Install editable into the project-local virtual environment:
+Requires Python ≥ 3.11.
+
+**As a dependency** — install just the `nexus_memory` package (no tests, docs, or examples) straight from GitHub:
 
 ```sh
+pip install "git+https://github.com/Sakushi-Dev/nexus_memory.git"
+```
+
+**For development** — clone the full repository (module plus tests, docs, and examples) and install it editable:
+
+```sh
+git clone https://github.com/Sakushi-Dev/nexus_memory.git
+cd nexus_memory
 ./.venv/Scripts/python.exe -m pip install -e .
 ```
 
