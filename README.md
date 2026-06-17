@@ -1,34 +1,26 @@
 # Nexus Memory
 
-A **local-first**, dependency-light agent-memory library for Python. It gives an LLM
-application a persistent, self-managing long-term memory backed by SQLite +
-[`sqlite-vec`](https://github.com/asg017/sqlite-vec) — no server, no network, no model
-download required for the default path.
+A **local-first**, dependency-light agent-memory library for Python. It gives an LLM application a persistent, self-managing long-term memory backed by SQLite + [`sqlite-vec`](https://github.com/asg017/sqlite-vec) — one `.db` file, no server, no network, and no model download on the default path. Everything flows through a single entry point, [`NexusMemory.process()`](src/nexus_memory/core/orchestrator.py), which validates every request with pydantic and never raises to the caller.
 
-- **Local & offline** — a single `.db` file; the default embedder is a deterministic,
-  dependency-free hashing vectorizer.
-- **Cognitive loops** — a *reader* (retrieve → graph-expand → multi-signal score → XML) and
-  an asynchronous *writer* (extract → dedup → store).
-- **One entry point** — everything goes through `NexusMemory.process()`, which validates
-  every request with pydantic and never raises to the caller.
-- **Transparent & sovereign** — inspect, pin, update, and forget your own memories.
-- **Privacy by design** — an opt-in regex PII filter can mask emails/phones/names before
-  embedding (off by default on the local path, where nothing leaves the machine; enable it
-  when embedding via an external API). An optional SQLCipher encryption hook stays off the
-  critical path.
-- **User-centric memory** — by default only the *user's* statements become semantic facts;
-  the assistant's prose is kept in the episodic diary, not the vector store.
+## Features
+
+- **Offline & deterministic** — the default [`HashingEmbedder`](src/nexus_memory/core/embeddings.py) (768-dim, blake2b feature hashing, L2-normalized) needs no downloads and produces stable, reproducible vectors. Nothing leaves the machine.
+- **Provider-agnostic** — swap in [`SentenceTransformerEmbedder`](src/nexus_memory/core/embeddings.py) or [`OpenAIEmbedder`](src/nexus_memory/core/embeddings.py) (lazy-imported), and bring your own fact extractor, summarizer, or directive detector. The optional diary layer summarizes via *any* model through a handoff outbox — the library itself never calls an LLM.
+- **Five-layer cognitive memory** — working, episodic, semantic, and procedural layers fan out from a single `ingest`; an optional hierarchical diary (Layer V) is off by default.
+- **One entry point** — every request is a dict (or JSON string) routed through `NexusMemory.process()`; all errors come back as `{"status": "error", "error": ...}`.
+- **Transparent & sovereign** — `inspect`, `forget`, `pin`, and `update` your own memories.
+- **Privacy by design** — an opt-in regex [PII filter](src/nexus_memory/core/privacy.py) masks emails/phones/names *before* embedding (off by default on the local path; turn it on for external embedding APIs). An optional SQLCipher [encryption](src/nexus_memory/core/security.py) hook stays off the critical path.
+- **User-centric** — by default only the *user's* statements become semantic facts; assistant prose goes to the episodic diary, not the vector store.
 
 ## Install
 
-A project-local virtual environment lives at `.venv`. Install the package into it
-(editable):
+Requires Python ≥ 3.11. Install editable into the project-local virtual environment:
 
 ```sh
 ./.venv/Scripts/python.exe -m pip install -e .
 ```
 
-Always use this interpreter (`./.venv/Scripts/python.exe`); do not use a global `python`.
+Optional extras: `.[sentence-transformers]`, `.[openai]`, `.[dev]`.
 
 ## Quickstart
 
@@ -37,167 +29,69 @@ from nexus_memory import NexusMemory
 
 memory = NexusMemory(db_path="my_agent.db")
 
-# Store an interaction (async; wait() makes it deterministic in a script)
 memory.process({
     "action": "ingest",
     "interaction": {
         "query": "where do I keep my keys?",
-        "response": "You always keep your house keys in the blue ceramic bowl "
-                    "on the kitchen counter.",
+        "response": "You always keep your house keys in the blue ceramic bowl.",
     },
 })
-memory.wait()
+memory.wait()  # ingest is async; wait() makes a script deterministic
 
-# Assemble a prompt-ready memory context
-result = memory.process({
-    "action": "assemble",
-    "query": "where are my house keys?",
-    "top_k": 3,
-})
-print(result["context_xml"])
-# <memory_context>
-#   <semantic>
-#     <fact id="2" importance="8" score="2.60" timestamp="...">Assistant: You always
-#       keep your house keys in the blue ceramic bowl on the kitchen counter.</fact>
-#   </semantic>
-# </memory_context>
-# (the default speaker-aware extractor prefixes each fact with "User:" / "Assistant:")
+result = memory.process({"action": "assemble", "query": "where are my keys?", "top_k": 3})
+print(result["context_xml"])  # prompt-ready <memory_context> XML
 
 memory.close()
 ```
 
-A runnable version is in [`examples/basic_usage.py`](examples/basic_usage.py).
+A runnable version lives in [`examples/basic_usage.py`](examples/basic_usage.py); the diary handoff loop is in [`examples/diary_outbox.py`](examples/diary_outbox.py).
+
+## The layer model
+
+A single `ingest` consolidates across layers, and `assemble` returns one unified, layer-aware `<memory_context>`:
+
+- **I. Working** ([`working.py`](src/nexus_memory/layers/working/working.py)) — a volatile RAM ring buffer of the last *N* turns for fast recency context.
+- **II. Episodic** ([`episodic/`](src/nexus_memory/layers/episodic/episodic.py)) — persistent raw dialogue plus deterministic narrative day-summaries.
+- **III. Semantic** ([`semantic/`](src/nexus_memory/layers/semantic/reader.py), [`core/db.py`](src/nexus_memory/core/db.py)) — decontextualized fact vectors retrieved by cosine KNN, graph-expanded, then re-ranked by `similarity × importance × exp(-λ · days)`.
+- **IV. Procedural** ([`procedural.py`](src/nexus_memory/layers/procedural/procedural.py)) — standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context.
+- **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded time-pyramid of model-written summaries; enable with `NexusMemory(diary=DiaryConfig(enabled=True))`, then drain `pending_summaries()` and return text via `submit_summary()`.
 
 ## Actions
 
-Every request is a dict (or JSON string) with an `action` field, passed to
-`memory.process(...)`.
+Every payload carries an `action`, passed to `memory.process(...)`:
 
-| action     | payload (key fields)                                      | returns |
-|------------|----------------------------------------------------------|---------|
-| `assemble` | `query`, `top_k=5`, `min_score=0.6`, `filters?`          | `{status, context_xml, raw_facts, meta, latency_ms}` |
-| `ingest`   | `interaction:{query, response}`, `metadata?`, `priority?` | `{status:"processing", task_id, estimated_completion_ms}` |
-| `forget`   | exactly one of `fact_id` / `query`                       | `{status, deleted_id}` |
-| `inspect`  | `type:"health"\|"episodic"\|"semantic"\|"working"\|"procedural"`, `filter?` | `{status, data}` |
-| `optimize` | —                                                        | `{before_bytes, after_bytes, facts}` |
-| `diary`    | `day?`, `time_range?`, `store?`                          | `{status, period, summary, turn_count}` |
-| `rule`     | `op:"add"\|"list"\|"deactivate"`, `directive?`, `priority?`, `rule_id?` | `{status, rule\|rules\|deactivated}` |
-| `distill`  | —                                                        | `{status, promoted:[rule,...]}` |
-| `pending_summaries` | `limit?` *(Layer V only)*                       | `{status, jobs:[{job_id, kind, period, prompt, prior_summary, input}, ...]}` |
-| `submit_summary` | `job_id`, `summary` *(Layer V only)*               | `{status:"success"\|"superseded"\|"not_found", applied?:"daily"\|"section"}` |
+| action | key fields | returns |
+|---|---|---|
+| `assemble` | `query`, `top_k=5`, `min_score=0.6`, `filters?` | `{status, context_xml, raw_facts, directives, recent_dialogue, meta, latency_ms}` |
+| `ingest` | `interaction:{query, response}`, `metadata?`, `priority?` | `{status:"processing", task_id, estimated_completion_ms}` |
+| `forget` | exactly one of `fact_id` / `query` | `{status, deleted_id}` |
+| `inspect` | `type:"health"\|"episodic"\|"semantic"\|"working"\|"procedural"`, `filter?` | `{status, data}` |
+| `optimize` | — | `{before_bytes, after_bytes, facts}` |
+| `diary` | `day?`, `time_range?`, `store?` | `{status, period, summary, turn_count}` |
+| `rule` | `op:"add"\|"list"\|"deactivate"`, `directive?`, `priority?`, `rule_id?` | add: `{status, rule}` · list: `{status, rules}` · deactivate: `{status, rule_id, deactivated}` |
+| `distill` | — | `{status, promoted:[rule,...]}` |
+| `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[{job_id, kind, period, prompt, prior_summary, input}, ...]}` |
+| `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
 
-Convenience wrappers: `memory.inspect(...)`, `memory.forget(...)`, `memory.wait(...)`,
-`memory.close()`, plus `memory.remember_rule(...)`, `memory.list_rules()`,
-`memory.diary(...)`, `memory.working_snapshot()`, `memory.reconstruct(...)`,
-`memory.distill()`.
+Convenience wrappers: `inspect(...)`, `forget(...)`, `wait(...)`, `close()`, `remember_rule(...)`, `list_rules()`, `diary(...)`, `working_snapshot()`, `reconstruct(...)`, `distill()`, plus `pending_summaries(...)` / `submit_summary(...)` when the diary is enabled.
 
-## Multi-layer memory
+Tune everything (scoring, dedup threshold, cache, privacy, per-layer settings) via [`NexusConfig`](src/nexus_memory/core/config.py).
 
-Beyond the semantic fact store, Nexus implements a **4-layer cognitive memory**
-architecture (Atkinson–Shiffrin model). A single `ingest` fans out across all
-relevant layers, and `assemble` returns a unified, layer-aware `<memory_context>`:
+## Documentation
 
-| Layer | Module | Persistence | Role |
-| :-- | :-- | :-- | :-- |
-| **I. Working** | `layers/working/working.py` | RAM (volatile) | last *N* turns, fast recency context |
-| **II. Episodic** | `layers/episodic/` (`episodic.py` + `summarization.py`) | SQLite | the diary: raw dialogue + narrative day summaries |
-| **III. Semantic** | `layers/semantic/` (`reader` / `writer`) + `core/db.py` | SQLite-vec | decontextualized fact vectors (cosine KNN) |
-| **IV. Procedural** | `layers/procedural/procedural.py` | SQLite | standing behavioral directives ("Respond in German.") |
+Full documentation lives under [docs/](docs/) — start at [docs/index.md](docs/index.md).
 
-Inter-layer transfer (`core/consolidation.py`, `core/context.py`) provides **consolidation**
-(write fan-out), **retrieval** (the unified context), and **distillation**
-(promote recurring semantic preferences into procedural rules). Procedural
-directives are meant to be injected into the system prompt so the model's
-*behavior* — not just its recalled facts — persists across sessions.
-
-```python
-m.process({"action": "ingest", "interaction": {
-    "query": "Sprich ab jetzt deutsch mit mir.",
-    "response": "Alles klar.",
-}})
-m.wait()
-res = m.process({"action": "assemble", "query": "anything"})
-assert "Respond in German." in res["directives"]   # detected automatically
-print(m.diary()["summary"])                          # narrative episodic summary
-```
-
-See [`docs/ms7_multilayer.md`](docs/ms7_multilayer.md) for the full architecture
-and the runnable 4-layer demo in
-[`../nexus-chat-demo/chat.py`](../nexus-chat-demo/chat.py) (`--selftest`, offline).
-
-## Optional Layer V — the hierarchical diary (off by default)
-
-An **optional** fifth layer adds a self-managing, bounded **diary**: a
-*time-pyramid* of LLM-written narrative summaries (rolling per-day diaries folded
-into a ring of multi-day epoch sections) — **without the module ever calling an
-LLM**. It is **provider-agnostic via a handoff outbox**: when a summary is due,
-Nexus *enqueues a job*; the host drains it, runs the prompt on any model, and
-hands the text back. It is **off by default** and fully removable — enable it
-explicitly with `NexusMemory(diary=DiaryConfig(enabled=True))`.
-
-Two new actions appear only when the layer is on: **`pending_summaries`** (the
-host pulls due jobs) and **`submit_summary`** (the host returns model output;
-idempotent apply). `assemble` then also emits bounded `<diary>` / 
-`<persistent_summary>` sections (no `id="…"`, so the needle invariant holds).
-
-```python
-from nexus_memory import NexusMemory, DiaryConfig
-
-m = NexusMemory(db_path="diary.db", diary=DiaryConfig(enabled=True))
-# ... ingest turns ...
-for job in m.pending_summaries():            # host drains the outbox
-    text = my_model(job["prompt"], job["prior_summary"], job["input"])
-    m.submit_summary(job["job_id"], text)    # folds into the time-pyramid
-print(m.inspect(type="diary")["data"])       # {"days": [...], "sections": [...]}
-```
-
-See [`docs/ms8_diary.md`](docs/ms8_diary.md) for the full design and
-[`examples/diary_outbox.py`](examples/diary_outbox.py) for a runnable, offline
-end-to-end (the host drain loop with a deterministic stand-in model); the chat demo
-opts in with `--diary` / `NEXUS_DIARY=1` and shows the pyramid via `/pyramid`.
-
-## How it works
-
-- **Scoring:** `FinalScore = similarity × importance × exp(-λ · days_passed)`
-  (`λ = decay_lambda`, default 0.01/day).
-- **Embeddings:** default `HashingEmbedder` (768-dim, blake2b feature hashing, L2-normalized)
-  preserves lexical overlap so paraphrases retrieve each other. Optional
-  `SentenceTransformerEmbedder` / `OpenAIEmbedder` adapters are lazily imported.
-- **Storage:** a vec0 virtual table (`distance_metric=cosine`) plus a lightweight
-  `memory_edges` graph for 1-hop expansion; WAL mode for concurrent reader/writer access.
-- **Config:** tune everything via `NexusConfig` (scoring, dedup threshold, cache, privacy).
-
-## Project structure
-
-```
-src/nexus_memory/
-  __init__.py            # stable public API (from nexus_memory import NexusMemory, …)
-  core/                  # substrate: config, db, embeddings, cache, models, scoring,
-                         #   xml_format, privacy, security, transparency,
-                         #   orchestrator, context, consolidation
-  layers/                # the memory systems, each its own subpackage
-    working/             #   I.   volatile RAM buffer
-    episodic/            #   II.  diary (raw turns + summaries)
-    semantic/            #   III. vector facts (reader / writer / extraction)
-    procedural/          #   IV.  behavioral directives
-    diary/               #   V.   optional hierarchical diary (off by default)
-```
-
-The top-level `__init__.py` re-exports the public surface, so import paths like
-`from nexus_memory import NexusMemory` are stable regardless of the internal layout.
+- **[Architecture](docs/architecture/overview.md)** — the five-layer design, retrieval & scoring, persistence, extension points.
+- **[Usage & API](docs/usage/api-reference.md)** — getting started, every action, embedders, transparency.
+- **[Configuration](docs/configuration/nexus-config.md)** — `NexusConfig`, `DiaryConfig`, tuning.
+- **[Use cases](docs/use-cases/agent-memory.md)** — agent memory, behavioral rules, the diary, privacy.
 
 ## Run the tests
-
-From the project root:
 
 ```sh
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
-All 151 tests pass (141 across the core + four layers, plus 10 for the optional
-Layer V diary). See [`docs/final_validation.md`](docs/final_validation.md) for the full
-report, benchmark numbers, and the needle-in-a-haystack result.
-
 ## License
 
-See project metadata in `pyproject.toml`.
+MIT — see [LICENSE](LICENSE).
