@@ -1,0 +1,7 @@
+# The Nexus Memory module is installed editable from ./nexus_memory_pkg
+# (which pulls its own deps: sqlite-vec, pydantic, numpy).
+openai>=1.40
+python-dotenv>=1.0
+rich>=13.7
+textual>=0.60        # the full-screen TUI frontend (chatapp/tui.py)
+tiktoken>=0.7        # token counting for the rolling token window (chatapp/tokens.py)

@@ -1,0 +1,457 @@
+"""In-process orchestrator for Nexus Memory.
+
+:class:`NexusMemory` is the public entry point of the library. It wires the
+storage layer (:class:`~nexus_memory.db.NexusDB`), the default embedder
+(:class:`~nexus_memory.embeddings.HashingEmbedder`), the semantic cache, the
+reader/writer loops, the fact extractor, the PII filter, and the transparency
+interface into a single object whose only surface is :meth:`process`.
+
+All communication happens through plain dicts (or JSON strings): the caller
+sends a payload with an ``action`` field and receives a dict back. The
+orchestrator validates each payload via :func:`nexus_memory.models.parse_request`
+and routes on the action. Errors are *never* raised to the caller from
+:meth:`process`; they are returned as ``{"status": "error", "error": ...}`` so a
+host application can treat the module as a black box that always answers.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # type-only; never costs an import when the diary is unused
+    from ..layers.diary.config import DiaryConfig
+
+from .cache import SemanticCache
+from .config import NexusConfig
+from .consolidation import (
+    EpisodicConsolidator,
+    ProceduralConsolidator,
+    distill as _distill,
+)
+from .context import ContextAssembler
+from .db import NexusDB
+from .embeddings import Embedder, HashingEmbedder
+from ..layers.episodic.episodic import EpisodicStore
+from ..layers.semantic.extraction import FactExtractor, MockFactExtractor, SpeakerAwareExtractor
+from .models import parse_request
+from .privacy import PIIFilter
+from ..layers.procedural.procedural import DirectiveDetector, MockDirectiveDetector, ProceduralStore
+from ..layers.semantic.reader import MemoryReader
+from ..layers.episodic.summarization import MockSummarizer, Summarizer
+from .transparency import TransparencyInterface
+from ..layers.working.working import WorkingMemory
+from ..layers.semantic.writer import MemoryWriter
+
+logger = logging.getLogger(__name__)
+
+# Rough heuristic for the "estimated_completion_ms" hint returned to callers
+# when an ingest is dispatched asynchronously. The real cost is dominated by
+# embedding + a single KNN dedup probe per extracted fact; this is a coarse,
+# non-binding estimate, not a measured value.
+_INGEST_ESTIMATE_MS = 50
+
+
+def _today_str() -> str:
+    """Return today's date as ``YYYY-MM-DD`` in UTC (matches DB timestamps)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+class NexusMemory:
+    """Local-first agent memory module with a single ``process()`` entry point.
+
+    Parameters
+    ----------
+    db_path:
+        Filesystem path for the SQLite database. Overrides ``config.db_path``
+        when an explicit ``config`` is also supplied.
+    config:
+        Optional pre-built :class:`~nexus_memory.config.NexusConfig`. When
+        omitted a default config is created and ``db_path`` is applied to it.
+    embedder:
+        Optional embedder. Defaults to a :class:`HashingEmbedder` sized to
+        ``config.dim`` (deterministic, dependency-free, offline).
+    extractor:
+        Optional :class:`~nexus_memory.extraction.FactExtractor`. Defaults to
+        :class:`~nexus_memory.extraction.SpeakerAwareExtractor`, which attributes
+        every stored fact to the user or the assistant and drops the assistant's
+        questions/filler (pass :class:`MockFactExtractor` for the naive splitter).
+    summarizer:
+        Optional :class:`~nexus_memory.summarization.Summarizer` for the episodic
+        diary. Defaults to the offline, deterministic
+        :class:`~nexus_memory.summarization.MockSummarizer`.
+    detector:
+        Optional :class:`~nexus_memory.procedural.DirectiveDetector` used to mine
+        standing behavioral rules from interactions. Defaults to the offline,
+        deterministic :class:`~nexus_memory.procedural.MockDirectiveDetector`.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "nexus_memory.db",
+        *,
+        config: NexusConfig | None = None,
+        embedder: Embedder | None = None,
+        extractor: FactExtractor | None = None,
+        summarizer: Summarizer | None = None,
+        detector: DirectiveDetector | None = None,
+        diary: "DiaryConfig | None" = None,
+    ) -> None:
+        # Build/override the config so db_path always reflects the argument.
+        if config is None:
+            config = NexusConfig(db_path=db_path)
+        else:
+            config.db_path = db_path
+        self.config = config
+
+        # Default to the dependency-free hashing embedder, sized to the config.
+        self.embedder: Embedder = embedder or HashingEmbedder(dim=config.dim)
+
+        # Storage + cache.
+        self.db = NexusDB(config)
+        self.cache = SemanticCache(
+            maxsize=config.cache_size, threshold=config.cache_threshold
+        )
+
+        # Privacy filter (shared with the writer for pre-embedding masking).
+        self.pii_filter = PIIFilter(enabled=config.pii_filter_enabled)
+
+        # Per-instance session id, used to tag episodic turns for this run.
+        self.session_id: str = str(uuid.uuid4())
+
+        # Cognitive layers (v2 multi-layer architecture).
+        #   I.   Working memory (volatile, RAM).
+        #   II.  Episodic store (durable dialogue + diary).
+        #   IV.  Procedural store (standing behavioral rules).
+        self.working = WorkingMemory(max_turns=config.working_memory_max_turns)
+        self.summarizer: Summarizer = summarizer or MockSummarizer()
+        self.episodic = EpisodicStore(self.db, config, summarizer=self.summarizer)
+        self.detector: DirectiveDetector = detector or MockDirectiveDetector()
+        self.procedural = ProceduralStore(self.db, config, detector=self.detector)
+
+        # Cognitive loops (semantic read/write).
+        self.reader = MemoryReader(
+            self.db, self.embedder, config, cache=self.cache
+        )
+        self.extractor: FactExtractor = extractor or SpeakerAwareExtractor(
+            include_assistant=config.semantic_include_assistant
+        )
+
+        # Inter-layer transfer: the writer fans each ingested interaction out to
+        # the episodic + procedural layers after the semantic writes complete.
+        self.consolidators = [
+            EpisodicConsolidator(self.episodic, lambda: self.session_id),
+            ProceduralConsolidator(self.procedural),
+        ]
+
+        # Optional Layer V (diary). Built ONLY when an enabled DiaryConfig is
+        # passed; otherwise self._diary stays None and nothing is constructed
+        # (no tables, no provider, no routing) — byte-identical legacy behavior.
+        # The import is local so the diary package is never loaded when unused.
+        self._diary = None
+        if diary is not None and diary.enabled:
+            from ..layers.diary.layer import DiaryLayer
+
+            diary_layer = DiaryLayer(self.db, self.episodic, diary)
+            # Append AFTER episodic+procedural so the diary consolidator runs last.
+            self.consolidators.append(diary_layer.consolidator)
+            self._diary = diary_layer
+
+        self.writer = MemoryWriter(
+            self.db,
+            self.embedder,
+            self.extractor,
+            config,
+            consolidators=self.consolidators,
+        )
+        # The writer resolves its PII filter lazily; hand it our shared instance
+        # so masking honours config.pii_filter_enabled and we avoid a second
+        # import path. (Writer treats `False` as "not yet resolved".)
+        self.writer._pii_filter = self.pii_filter  # noqa: SLF001 - intentional wiring
+
+        # Unified, layer-aware retrieval (the <memory_context> assembler). The
+        # diary plugs in through the generic context_providers seam (empty when
+        # the diary layer is off → identical output to the legacy three sections).
+        self.context = ContextAssembler(
+            self.reader,
+            self.episodic,
+            self.procedural,
+            self.working,
+            config,
+            context_providers=[self._diary.provider] if self._diary else [],
+        )
+
+        self.transparency = TransparencyInterface(self.db, self.embedder, config)
+        # Give the transparency interface refs to the volatile/procedural layers
+        # so inspect(type="working"/"procedural") can read them.
+        self.transparency.working = self.working
+        self.transparency.procedural = self.procedural
+
+        logger.debug(
+            "NexusMemory initialized (db_path=%s, session_id=%s)",
+            config.db_path,
+            self.session_id,
+        )
+
+    # ------------------------------------------------------------------ #
+    # public API
+    # ------------------------------------------------------------------ #
+    def process(self, payload: dict | str) -> dict:
+        """Validate and route a request, returning a plain dict response.
+
+        Accepts either a dict or a JSON string. The payload is validated by
+        :func:`nexus_memory.models.parse_request` and then dispatched on its
+        ``action``:
+
+        ============  =====================================================
+        action        handler
+        ============  =====================================================
+        ``assemble``  :meth:`MemoryReader.assemble_context`
+        ``ingest``    :meth:`MemoryWriter.ingest_async` (returns a task id)
+        ``forget``    :meth:`TransparencyInterface.forget`
+        ``inspect``   :meth:`TransparencyInterface.inspect`
+        ``optimize``  :meth:`MemoryWriter.optimize`
+        ============  =====================================================
+
+        This method never raises to the caller: invalid JSON, an unknown
+        action, a validation failure, or a handler error are all returned as
+        ``{"status": "error", "error": <message>}``.
+        """
+        # 1. Decode a JSON string payload, if needed.
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, ValueError) as exc:
+                logger.warning("process: invalid JSON payload: %s", exc)
+                return {"status": "error", "error": f"invalid JSON: {exc}"}
+
+        if not isinstance(payload, dict):
+            return {
+                "status": "error",
+                "error": "payload must be a JSON object or dict",
+            }
+
+        # 1b. Diary actions (only when the layer is active) are validated + routed
+        #     via the layer's OWN models BEFORE core.parse_request, so core/models.py
+        #     stays untouched. When the diary is off these fall through to the normal
+        #     unknown-action validation error below.
+        if self._diary is not None and payload.get("action") in (
+            "pending_summaries",
+            "submit_summary",
+        ):
+            try:
+                request = self._diary.parse_request(payload)
+            except Exception as exc:  # noqa: BLE001 - surface validation as error
+                logger.warning("process: diary validation failed: %s", exc)
+                return {"status": "error", "error": str(exc)}
+            try:
+                return self._diary.route(payload["action"], request)
+            except Exception as exc:  # noqa: BLE001 - never raise to the caller
+                logger.exception("process: diary handler failed")
+                return {"status": "error", "error": str(exc)}
+
+        # 2. Validate + dispatch.
+        try:
+            request = parse_request(payload)
+        except Exception as exc:  # noqa: BLE001 - surface validation as an error dict
+            logger.warning("process: request validation failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+        action = payload.get("action")
+        try:
+            return self._route(action, request, payload)
+        except Exception as exc:  # noqa: BLE001 - never raise to the caller
+            logger.exception("process: handler for action %r failed", action)
+            return {"status": "error", "error": str(exc)}
+
+    def _route(self, action: str, request: Any, payload: dict) -> dict:
+        """Dispatch a validated ``request`` to the matching handler."""
+        if action == "assemble":
+            # Unified, layer-aware retrieval (semantic + procedural + recent).
+            return self.context.assemble(
+                {
+                    "query": request.query,
+                    "top_k": request.top_k,
+                    "min_score": request.min_score,
+                    "filters": request.filters,
+                }
+            )
+
+        if action == "ingest":
+            interaction = {
+                "query": request.interaction.query,
+                "response": request.interaction.response,
+            }
+            # Layer I update happens synchronously on the caller thread so the
+            # working buffer reflects the turn immediately; the durable semantic/
+            # episodic/procedural writes are dispatched asynchronously.
+            self.working.add_interaction(
+                interaction["query"], interaction["response"]
+            )
+            task_id = self.writer.ingest_async(interaction, request.metadata)
+            return {
+                "status": "processing",
+                "task_id": task_id,
+                "estimated_completion_ms": _INGEST_ESTIMATE_MS,
+            }
+
+        if action == "forget":
+            return self.transparency.forget(
+                fact_id=request.fact_id, query=request.query
+            )
+
+        if action == "inspect":
+            return self.transparency.inspect(
+                type=request.type, filter=request.filter
+            )
+
+        if action == "optimize":
+            return self.writer.optimize()
+
+        if action == "diary":
+            return self._route_diary(request)
+
+        if action == "rule":
+            return self._route_rule(request)
+
+        if action == "distill":
+            return self.distill()
+
+        # parse_request already rejects unknown actions, so this is defensive.
+        return {"status": "error", "error": f"unknown action: {action!r}"}
+
+    def _route_diary(self, request: Any) -> dict:
+        """Handle a ``diary`` request (episodic summary or reconstruction)."""
+        if request.time_range is not None and len(request.time_range) == 2:
+            start, end = str(request.time_range[0]), str(request.time_range[1])
+            transcript = self.episodic.reconstruct(time_range=(start, end))
+            return {
+                "status": "success",
+                "time_range": [start, end],
+                "transcript": transcript,
+            }
+        # day=None -> EpisodicStore defaults to the latest day that has turns,
+        # so "show me the diary" is never empty just because UTC rolled over.
+        result = self.episodic.summarize_day(request.day, store=request.store)
+        result["status"] = "success"
+        return result
+
+    def _route_rule(self, request: Any) -> dict:
+        """Handle a ``rule`` request (add / list / deactivate directives)."""
+        if request.op == "add":
+            rule = self.procedural.add_rule(
+                directive=request.directive,
+                category=request.category,
+                priority=request.priority,
+                source="manual",
+            )
+            return {"status": "success", "rule": rule}
+        if request.op == "list":
+            rules = self.procedural.list_rules(active_only=request.active_only)
+            return {"status": "success", "rules": rules}
+        if request.op == "deactivate":
+            changed = self.procedural.deactivate(request.rule_id)
+            return {
+                "status": "success" if changed else "not_found",
+                "rule_id": request.rule_id,
+                "deactivated": changed,
+            }
+        return {"status": "error", "error": f"unknown rule op: {request.op!r}"}
+
+    # ------------------------------------------------------------------ #
+    # convenience wrappers
+    # ------------------------------------------------------------------ #
+    def inspect(self, **kw: Any) -> dict:
+        """Convenience wrapper around :meth:`TransparencyInterface.inspect`.
+
+        ``inspect(type="diary")`` is served by the diary layer here (NOT added to
+        ``core/models.InspectRequest``); it errors when the diary is off.
+        """
+        if kw.get("type") == "diary":
+            if self._diary is None:
+                return {"status": "error", "error": "diary layer not enabled"}
+            return {"status": "success", "data": self._diary.state()}
+        return self.transparency.inspect(**kw)
+
+    def pending_summaries(self, limit: int | None = None) -> list[dict] | dict:
+        """Return the diary's pending handoff jobs (host drains these).
+
+        Returns an error dict when the diary layer is not enabled.
+        """
+        if self._diary is None:
+            return {"status": "error", "error": "diary layer not enabled"}
+        return self._diary.pending_summaries(limit=limit)
+
+    def submit_summary(self, job_id: str, summary: str) -> dict:
+        """Hand a model-produced summary back to the diary layer.
+
+        Returns an error dict when the diary layer is not enabled.
+        """
+        if self._diary is None:
+            return {"status": "error", "error": "diary layer not enabled"}
+        return self._diary.submit_summary(job_id, summary)
+
+    def forget(self, **kw: Any) -> dict:
+        """Convenience wrapper around :meth:`TransparencyInterface.forget`."""
+        return self.transparency.forget(**kw)
+
+    def remember_rule(
+        self,
+        directive: str,
+        category: str = "other",
+        priority: int = 5,
+        source: str = "manual",
+    ) -> dict:
+        """Add (or reactivate) a standing procedural directive. Returns the rule."""
+        return self.procedural.add_rule(
+            directive=directive,
+            category=category,
+            priority=priority,
+            source=source,
+        )
+
+    def list_rules(self, active_only: bool = True) -> list[dict]:
+        """Return the stored procedural rules (active only by default)."""
+        return self.procedural.list_rules(active_only=active_only)
+
+    def diary(self, day: str | None = None, store: bool = False) -> dict:
+        """Return a narrative summary for ``day``.
+
+        With ``day=None`` the episodic store summarizes the most recent day that
+        actually has turns (so a late-night session is not lost to a UTC rollover).
+        """
+        return self.episodic.summarize_day(day, store=store)
+
+    def working_snapshot(self) -> list[dict]:
+        """Return the volatile working-memory buffer as ``[{role,content,timestamp}]``."""
+        return self.working.snapshot()
+
+    def reconstruct(self, time_range: tuple[str, str] | None = None) -> str:
+        """Return a human-readable transcript of the episodic dialogue history."""
+        return self.episodic.reconstruct(time_range=time_range)
+
+    def distill(self) -> dict:
+        """Promote standing-preference semantic facts into procedural rules.
+
+        Returns ``{"status": "success", "promoted": [rule, ...]}``.
+        """
+        promoted = _distill(self.db, self.procedural, detector=self.detector)
+        return {"status": "success", "promoted": promoted}
+
+    def wait(self, timeout: float | None = None) -> None:
+        """Block until outstanding async ingests finish (delegates to writer)."""
+        self.writer.wait(timeout)
+
+    def close(self) -> None:
+        """Flush background writers and close the database connection."""
+        try:
+            self.writer.wait()
+            if self._diary is not None:
+                self._diary.finalize()
+        finally:
+            self.db.close()
+        logger.debug("NexusMemory closed.")
