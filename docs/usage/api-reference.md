@@ -61,7 +61,7 @@ NexusMemory(
     extractor: FactExtractor | None = None,
     summarizer: Summarizer | None = None,
     detector: DirectiveDetector | None = None,
-    diary: DiaryConfig | None = None,
+    diary: DiaryConfig | bool | None = None,
 ) -> None
 ```
 
@@ -75,7 +75,7 @@ All seven parameters and their defaults:
 | `extractor` | `None` → `SpeakerAwareExtractor(include_assistant=config.semantic_include_assistant)` | Turns interactions into scored facts. Pass `MockFactExtractor()` for the naive sentence splitter. |
 | `summarizer` | `None` → `MockSummarizer()` | Episodic (Layer II) day-summary backend (offline, deterministic). |
 | `detector` | `None` → `MockDirectiveDetector()` | Mines standing behavioral rules from interactions (offline, DE + EN). |
-| `diary` | `None` | Optional Layer V config. The diary layer is built **only** when `diary is not None and diary.enabled`. Otherwise no diary tables, provider, or routing exist. |
+| `diary` | `None` | Optional Layer V switch. Pass `diary=True` (shorthand for `DiaryConfig(enabled=True)`) or a [`DiaryConfig`](../configuration/diary-config.md) for custom knobs; `False`/`None` leaves it off. The layer is built **only** when the resolved config is enabled — otherwise no diary tables, provider, or routing exist. |
 
 **Construction side effects.** Opens the SQLite connection (loads sqlite-vec,
 applies the schema sized to `config.dim`), builds the semantic cache, the
