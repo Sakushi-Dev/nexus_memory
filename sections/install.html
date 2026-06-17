@@ -1,0 +1,60 @@
+<section class="section" id="install">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">Quickstart</p>
+      <h2 class="h2">Two files and you're remembering.</h2>
+      <p class="lead">Install into a project-local virtualenv, then talk to memory through <code>process()</code> — or wire the standing behavior straight into your system prompt.</p>
+    </div>
+
+    <div class="showcase-grid">
+      <div class="code" data-reveal>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">install.sh</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># a project-local venv, editable install</span>
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -e .
+
+<span class="tok-c"># run the offline self-test — no API key needed</span>
+./.venv/Scripts/python.exe -m pytest -q
+<span class="tok-c"># 151 passed ✓</span></code></pre>
+      </div>
+
+      <div class="code" data-reveal>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">behavior.py</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># a standing request is detected and persisted…</span>
+m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {
+    <span class="tok-s">"query"</span>:    <span class="tok-s">"Sprich ab jetzt deutsch mit mir."</span>,
+    <span class="tok-s">"response"</span>: <span class="tok-s">"Alles klar."</span>,
+}})
+m.<span class="tok-f">wait</span>()
+
+res = m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"hi"</span>})
+<span class="tok-k">assert</span> <span class="tok-s">"Respond in German."</span> <span class="tok-k">in</span> res[<span class="tok-s">"directives"</span>]
+<span class="tok-c"># …inject directives into the system prompt — behavior persists.</span></code></pre>
+      </div>
+    </div>
+
+    <div style="margin-top:34px" data-reveal>
+      <p class="eyebrow" style="margin-bottom:12px">process() actions</p>
+      <div class="badges">
+        <span class="badge"><b>assemble</b></span>
+        <span class="badge"><b>ingest</b></span>
+        <span class="badge"><b>inspect</b></span>
+        <span class="badge"><b>forget</b></span>
+        <span class="badge"><b>optimize</b></span>
+        <span class="badge"><b>diary</b></span>
+        <span class="badge"><b>rule</b></span>
+        <span class="badge"><b>distill</b></span>
+        <span class="badge"><b>pending_summaries</b></span>
+        <span class="badge"><b>submit_summary</b></span>
+      </div>
+    </div>
+  </div>
+</section>

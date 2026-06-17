@@ -1,0 +1,32 @@
+<section class="section" id="tech">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">How it works</p>
+      <h2 class="h2">Boring, fast, and dependency-light.</h2>
+      <p class="lead">No vector server, no GPU, no model download on the default path — just SQLite, a virtual table, and a little linear algebra.</p>
+    </div>
+
+    <div class="stats" data-reveal>
+      <div class="stat"><div class="big">768</div><div class="lbl">dim vectors (vec0)</div></div>
+      <div class="stat"><div class="big">~3<span style="font-size:18px">ms</span></div><div class="lbl">assemble latency (local)</div></div>
+      <div class="stat"><div class="big">5</div><div class="lbl">cognitive layers</div></div>
+      <div class="stat"><div class="big">151</div><div class="lbl">tests passing</div></div>
+    </div>
+
+    <div class="tech-list" data-reveal>
+      <div class="tech-item"><span class="ic">◆</span><div><b>vec0 KNN, cosine</b> <span>— `WHERE embedding MATCH ? AND k = ?` over a sqlite-vec virtual table.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>HashingEmbedder</b> <span>— blake2b feature hashing, L2-normalized, deterministic &amp; offline by default.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Pluggable embedders</b> <span>— lazy SentenceTransformer / OpenAI adapters when you want them.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Async write pipeline</b> <span>— extract → PII-mask → embed → KNN dedup → store, off the caller's thread.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Speaker-aware extraction</b> <span>— facts know who said them; the assistant's prose stays in the diary.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>WAL concurrency</b> <span>— a shared re-entrant write lock serializes commits across layer stores.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Pydantic v2 contract</b> <span>— every request validated; <code>process()</code> returns an error dict, never throws.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Privacy &amp; security</b> <span>— opt-in regex PII masking; an off-path SQLCipher encryption hook.</span></div></div>
+    </div>
+
+    <div class="formula" data-reveal>
+      <div class="f">FinalScore = <b>similarity</b> × <b>importance</b> × <b>exp(</b>−λ · days_passed<b>)</b></div>
+      <div class="cap">multi-signal ranking — relevance, salience, and recency decay (λ = 0.01 / day) in one number</div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,42 @@
+<section class="section" id="features">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">Why Nexus</p>
+      <h2 class="h2">A memory you can drop in — and reason about.</h2>
+      <p class="lead">Everything goes through one validated entry point, runs on a single local file, and never hides what it's doing.</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="card" data-reveal>
+        <div class="card-ico">⌘</div>
+        <h3>One entry point</h3>
+        <p>Send a dict (or JSON) to <code>process()</code>, get a dict back. It validates every request with pydantic and <b>never raises</b> to the caller — treat memory as a black box that always answers.</p>
+      </div>
+      <div class="card" data-reveal>
+        <div class="card-ico">⬡</div>
+        <h3>Local &amp; offline</h3>
+        <p>A single <code>.db</code> file (SQLite + sqlite-vec). The default embedder is a deterministic, dependency-free hashing vectorizer — no server, no network, no model download.</p>
+      </div>
+      <div class="card" data-reveal>
+        <div class="card-ico">▤</div>
+        <h3>5-layer cognitive memory</h3>
+        <p>Working, episodic, semantic and procedural memory — modeled on Atkinson–Shiffrin — plus an optional hierarchical <b>diary</b>. One ingest fans out across all of them.</p>
+      </div>
+      <div class="card" data-reveal>
+        <div class="card-ico">⇄</div>
+        <h3>Provider-agnostic</h3>
+        <p>The module <b>never calls an LLM</b>. When a summary is due it enqueues a job into a handoff <em>outbox</em>; your host runs it on any model and hands the text back. Nexus owns the prompt, you own the model.</p>
+      </div>
+      <div class="card" data-reveal>
+        <div class="card-ico">◎</div>
+        <h3>Transparent &amp; sovereign</h3>
+        <p>Inspect, pin, update and <b>forget</b> your own memories. A live trace surfaces the module's internal steps — the real 4-layer write fan-out and retrieval, nothing fabricated.</p>
+      </div>
+      <div class="card" data-reveal>
+        <div class="card-ico">⌖</div>
+        <h3>Salient retrieval</h3>
+        <p>vec0 cosine KNN plus multi-signal scoring (<code>similarity × importance × decay</code>) keep the working context small and on-point — mitigating the lost-in-the-middle problem.</p>
+      </div>
+    </div>
+  </div>
+</section>

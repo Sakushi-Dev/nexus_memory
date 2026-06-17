@@ -1,0 +1,54 @@
+<section class="section hero" id="top">
+  <div class="container">
+    <div class="hero-name">nexus_memory</div>
+
+    <div class="hero-grid">
+      <div class="hero-copy" data-reveal>
+        <span class="tagpill"><span class="dotlive"></span> local-first · runs fully offline</span>
+        <h1>Persistent memory for<br><span class="grad">LLM agents.</span></h1>
+        <p class="sub">
+          Nexus is an in-process, SQLite-vec backed <b>cognitive memory module</b> — working,
+          episodic, semantic and procedural memory, plus an optional hierarchical diary.
+          One <code>process()</code> entry point. No server. No model download.
+        </p>
+        <div class="badges">
+          <span class="badge"><b>Python</b> 3.11+</span>
+          <span class="badge"><b>SQLite</b> + sqlite-vec</span>
+          <span class="badge"><b>5</b> memory layers</span>
+          <span class="badge"><b>151</b> tests green</span>
+          <span class="badge"><b>MIT</b></span>
+        </div>
+        <div class="btns">
+          <a class="btn btn-primary" href="#install">Quickstart →</a>
+          <a class="btn btn-ghost" href="#architecture">See the architecture</a>
+        </div>
+      </div>
+
+      <div class="hero-code" data-reveal>
+        <div class="code">
+          <div class="code-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="file">agent.py</span>
+            <button class="copy" data-copy>copy</button>
+          </div>
+          <pre><code><span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
+
+m = <span class="tok-f">NexusMemory</span>(db_path=<span class="tok-s">"agent.db"</span>)
+
+<span class="tok-c"># a single ingest fans out across every layer</span>
+m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {
+    <span class="tok-s">"query"</span>:    <span class="tok-s">"where do I keep my keys?"</span>,
+    <span class="tok-s">"response"</span>: <span class="tok-s">"In the blue ceramic bowl."</span>,
+}})
+m.<span class="tok-f">wait</span>()
+
+<span class="tok-c"># assemble a prompt-ready, layer-aware context</span>
+res = m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>,
+                 <span class="tok-s">"query"</span>: <span class="tok-s">"where are my keys?"</span>})
+<span class="tok-f">print</span>(res[<span class="tok-s">"context_xml"</span>])
+<span class="tok-c"># &lt;memory_context&gt; … &lt;fact id="2"&gt;blue ceramic bowl&lt;/fact&gt; … &lt;/memory_context&gt;</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

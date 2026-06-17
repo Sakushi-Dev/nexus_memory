@@ -1,0 +1,104 @@
+<section class="section" id="io">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">Input / Output</p>
+      <h2 class="h2">One turn, end to end.</h2>
+      <p class="lead">How data flows through a working setup: your app orchestrates, Nexus reads and writes memory, the model answers — and the diary folds in asynchronously, on a model of your choice.</p>
+    </div>
+
+    <div class="io-fig" data-reveal>
+      <svg viewBox="0 0 1160 600" role="img" aria-label="Nexus Memory input/output flow diagram" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="aS" markerWidth="9" markerHeight="9" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 Z" fill="var(--accent)"/></marker>
+          <marker id="aM" markerWidth="9" markerHeight="9" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 Z" fill="var(--muted)"/></marker>
+          <marker id="aD" markerWidth="9" markerHeight="9" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 Z" fill="var(--l5)"/></marker>
+        </defs>
+        <style>
+          .n-rect{fill:var(--surface);stroke:var(--line-2);stroke-width:1.5}
+          .n-nexus{fill:var(--surface);stroke:var(--accent);stroke-width:1.6}
+          .n-llm{fill:var(--surface);stroke:var(--accent-2);stroke-width:1.6}
+          .n-inner{fill:var(--surface-2);stroke:var(--line);stroke-width:1.2}
+          .n-inner.dash{stroke:var(--l5);stroke-dasharray:5 4}
+          .cyl{fill:var(--surface-2);stroke:var(--line-2);stroke-width:1.4}
+          .t-title{fill:var(--text);font:700 14px var(--mono)}
+          .t-sub{fill:var(--muted);font:12px var(--mono)}
+          .t-faint{fill:var(--faint);font:11px var(--mono)}
+          .t-lbl{fill:var(--text);font:11px var(--mono);text-anchor:middle}
+          .t-lblm{fill:var(--muted);font:11px var(--mono);text-anchor:middle}
+          .t-pink{fill:var(--l5);font:10.5px var(--mono)}
+          .t-c{text-anchor:middle}
+          .flow-s{stroke:var(--accent);stroke-width:1.9;fill:none}
+          .flow-m{stroke:var(--muted);stroke-width:1.5;fill:none}
+          .flow-d{stroke:var(--l5);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+        </style>
+
+        <!-- ============ nodes ============ -->
+        <!-- user -->
+        <rect class="n-rect" x="24" y="250" width="118" height="74" rx="12"/>
+        <text class="t-title t-c" x="83" y="293">user</text>
+
+        <!-- host app -->
+        <rect class="n-rect" x="206" y="224" width="252" height="140" rx="16"/>
+        <text class="t-title t-c" x="332" y="258">YOUR APP</text>
+        <text class="t-sub  t-c" x="332" y="284">prompt builder</text>
+        <text class="t-faint t-c" x="332" y="306">+ history · drain loop</text>
+
+        <!-- llm -->
+        <rect class="n-llm" x="600" y="40" width="384" height="130" rx="16"/>
+        <text class="t-title" x="620" y="72">LLM provider</text>
+        <text class="t-sub"   x="620" y="100">primary  →  the chat reply</text>
+        <text class="t-sub"   x="620" y="124">aux      →  the diary summaries</text>
+        <text class="t-faint" x="620" y="150">any provider · streamed</text>
+
+        <!-- nexus -->
+        <rect class="n-nexus" x="600" y="224" width="412" height="202" rx="16"/>
+        <text class="t-title" x="620" y="254">NEXUS · process()</text>
+        <rect class="n-inner" x="618" y="270" width="376" height="66" rx="10"/>
+        <text class="t-sub" x="630" y="294" style="font-weight:700">CORE</text>
+        <text class="t-sub" x="630" y="318">I·Working  II·Episodic  III·Semantic  IV·Procedural</text>
+        <rect class="n-inner dash" x="618" y="348" width="376" height="58" rx="10"/>
+        <text class="t-pink" x="630" y="372" style="font-weight:700">V · Diary — plug-in</text>
+        <text class="t-sub"  x="630" y="394">enqueue → outbox</text>
+
+        <!-- db cylinder -->
+        <path class="cyl" d="M714,468 a92,15 0 0 1 184,0 v74 a92,15 0 0 1 -184,0 z"/>
+        <ellipse class="cyl" cx="806" cy="468" rx="92" ry="15"/>
+        <text class="t-sub t-c" x="806" y="514" style="fill:var(--text)">SQLite + sqlite-vec</text>
+        <text class="t-faint t-c" x="806" y="533">one .db file</text>
+
+        <!-- ============ main turn (solid) ============ -->
+        <line class="flow-s" x1="142" y1="276" x2="204" y2="276" marker-end="url(#aS)"/>
+        <text class="t-lbl" x="173" y="268">message</text>
+        <line class="flow-m" x1="206" y1="312" x2="144" y2="312" marker-end="url(#aM)"/>
+        <text class="t-lblm" x="173" y="328">reply</text>
+
+        <line class="flow-s" x1="458" y1="272" x2="598" y2="272" marker-end="url(#aS)"/>
+        <text class="t-lbl" x="528" y="264">1 · assemble(query)</text>
+        <line class="flow-m" x1="600" y1="300" x2="460" y2="300" marker-end="url(#aM)"/>
+        <text class="t-lblm" x="528" y="316">‹memory_context›</text>
+        <line class="flow-s" x1="458" y1="336" x2="598" y2="336" marker-end="url(#aS)"/>
+        <text class="t-lbl" x="528" y="352">3 · ingest(query, answer)</text>
+
+        <line class="flow-s" x1="346" y1="224" x2="640" y2="170" marker-end="url(#aS)"/>
+        <text class="t-lbl" x="452" y="184">2 · prompt</text>
+        <line class="flow-m" x1="708" y1="170" x2="430" y2="222" marker-end="url(#aM)"/>
+        <text class="t-lblm" x="600" y="206">answer · streamed</text>
+
+        <line class="flow-s" x1="806" y1="426" x2="806" y2="452" marker-end="url(#aS)"/>
+        <text class="t-faint" x="816" y="446">store ↔ retrieve</text>
+
+        <!-- ============ diary loop (dotted) ============ -->
+        <polyline class="flow-d" points="994,376 1044,376 1044,150 986,150" marker-end="url(#aD)"/>
+        <text class="t-pink" x="1040" y="284" transform="rotate(-90 1040 284)">4 · pending_summaries()</text>
+        <polyline class="flow-d" points="984,118 1086,118 1086,398 1014,398" marker-end="url(#aD)"/>
+        <text class="t-pink" x="1082" y="300" transform="rotate(-90 1082 300)">5 · submit_summary()</text>
+      </svg>
+
+      <div class="io-legend">
+        <span><i class="sw s"></i> solid — one synchronous turn <b>(1 → 3)</b></span>
+        <span><i class="sw d"></i> dotted — the async diary handoff <b>(4 → 5)</b>, drained on the aux model</span>
+        <span class="muted">Nexus never calls an LLM itself — it only enqueues jobs.</span>
+      </div>
+    </div>
+  </div>
+</section>

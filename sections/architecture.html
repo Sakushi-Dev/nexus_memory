@@ -1,0 +1,66 @@
+<section class="section" id="architecture">
+  <div class="container">
+    <div class="section-head" data-reveal>
+      <p class="eyebrow">Architecture</p>
+      <h2 class="h2">Five layers, one ingest.</h2>
+      <p class="lead">A single interaction is consolidated across every relevant layer; a single query assembles a unified, layer-aware <code>&lt;memory_context&gt;</code>.</p>
+    </div>
+
+    <div class="arch-grid">
+      <div class="layers" data-reveal>
+        <div class="layer" style="--lc: var(--l1)">
+          <div class="layer-num">I<small>WORKING</small></div>
+          <div class="layer-body">
+            <h4>Working memory <span class="pill">RAM</span></h4>
+            <p>A volatile ring buffer of the last <em>N</em> turns — fast, recency-ordered context for the current session.</p>
+          </div>
+        </div>
+        <div class="layer" style="--lc: var(--l2)">
+          <div class="layer-num">II<small>EPISODIC</small></div>
+          <div class="layer-body">
+            <h4>Episodic memory <span class="pill">SQLite</span></h4>
+            <p>The durable diary: every raw user/assistant turn, reconstructable verbatim, plus narrative day summaries.</p>
+          </div>
+        </div>
+        <div class="layer" style="--lc: var(--l3)">
+          <div class="layer-num">III<small>SEMANTIC</small></div>
+          <div class="layer-body">
+            <h4>Semantic memory <span class="pill">sqlite-vec</span></h4>
+            <p>Decontextualized fact vectors — extracted, deduplicated, and retrieved by cosine similarity with multi-signal scoring.</p>
+          </div>
+        </div>
+        <div class="layer" style="--lc: var(--l4)">
+          <div class="layer-num">IV<small>PROCEDURAL</small></div>
+          <div class="layer-body">
+            <h4>Procedural memory <span class="pill">rules</span></h4>
+            <p>Standing behavioral directives — “Respond in German.”, “Keep answers concise.” — injected so the model's <em>behavior</em> persists.</p>
+          </div>
+        </div>
+        <div class="layer opt" style="--lc: var(--l5)">
+          <div class="layer-num">V<small>DIARY</small></div>
+          <div class="layer-body">
+            <h4>Hierarchical diary <span class="pill">optional</span></h4>
+            <p>A bounded time-pyramid of LLM-written narrative — rolling daily entries folded into epoch sections, via a provider-agnostic outbox.</p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="transfer" data-reveal>
+        <h3>Inter-layer transfer</h3>
+        <p>The glue that moves information between layers so the context window stays small and salient.</p>
+        <div class="xfer">
+          <span class="n">01</span>
+          <div><b>Consolidation</b><p>One ingest fans out — working buffer, semantic facts, episodic log, and procedural rule detection.</p></div>
+        </div>
+        <div class="xfer">
+          <span class="n">02</span>
+          <div><b>Retrieval</b><p>One query assembles the unified <code>&lt;memory_context&gt;</code>: directives + scored facts + recent dialogue.</p></div>
+        </div>
+        <div class="xfer">
+          <span class="n">03</span>
+          <div><b>Distillation</b><p>Recurring high-importance preferences graduate from facts into standing procedural directives.</p></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>

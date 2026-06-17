@@ -1,0 +1,66 @@
+<section class="section" id="faq">
+  <div class="container">
+    <div class="section-head" data-reveal style="margin-left:auto;margin-right:auto;text-align:center">
+      <p class="eyebrow" style="justify-content:center">FAQ</p>
+      <h2 class="h2">Questions, answered.</h2>
+      <p class="lead" style="margin:0 auto">The short version — local-first, provider-agnostic, and yours to inspect.</p>
+    </div>
+
+    <div class="faq-list">
+      <details class="faq-item" data-reveal open>
+        <summary>What is Nexus Memory?<span class="q-ico"></span></summary>
+        <div class="a">A <b>local-first cognitive memory</b> for LLM agents. Instead of a flat chat log, it gives your agent working, episodic, semantic and procedural memory behind a single <code>process()</code> call — so it actually remembers facts, events and your standing preferences across sessions. It runs as one local <code>.db</code> file, offline and provider-agnostic. See <a href="#features">Features</a>, the <a href="#architecture">Architecture</a>, or read the <a href="docs.html#overview">Overview in the docs</a>.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>How do I install it?<span class="q-ico"></span></summary>
+        <div class="a">Two steps: create a project-local virtualenv and do an editable install — <code>python -m venv .venv</code>, then <code>pip install -e .</code>. There's no API key or model download for the default offline path. The full copy-paste snippet (plus the offline self-test) is in the <a href="#install">Quickstart</a>, and a deeper walkthrough lives in the <a href="docs.html#overview">docs</a>.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>How do I use it once it's installed?<span class="q-ico"></span></summary>
+        <div class="a">Everything goes through one entry point: <code>process()</code>. You <b>ingest</b> an interaction to store it and <b>assemble</b> a context (plus standing <b>directives</b>) to read it back — then inject those into your system prompt. The <a href="#install">Quickstart</a> shows a working example; the <a href="#io">I/O map</a> and <a href="docs.html#io">I/O docs</a> list every action and its inputs and outputs.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>Does Nexus need an API key or internet?<span class="q-ico"></span></summary>
+        <div class="a">No. The default path is fully offline: a single local <code>.db</code> file (SQLite + sqlite-vec) and a deterministic, dependency-free hashing embedder — <b>no server, no model download</b>. External embedders or an LLM for the diary are entirely optional.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>How is it different from a vector database?<span class="q-ico"></span></summary>
+        <div class="a">A vector DB stores embeddings; Nexus is a <b>cognitive memory</b>. It layers working, episodic, semantic and procedural memory behind one <code>process()</code> call, and moves information between them — consolidation on write, a unified context on read, and distillation of recurring preferences into standing <b>behavior</b>.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>Which LLM providers are supported?<span class="q-ico"></span></summary>
+        <div class="a">All of them — because the module <b>never calls an LLM itself</b>. When a diary summary is due it enqueues a job into a handoff <em>outbox</em>; your host runs it on any provider (and you can point those side tasks at a separate, cheap “aux” model while a stronger model handles the chat).</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>Is my data private?<span class="q-ico"></span></summary>
+        <div class="a">Yes. Everything lives in one local file you control. There's opt-in regex PII masking before embedding, an off-path SQLCipher encryption hook, and full transparency — <code>inspect</code>, pin, update and <code>forget</code> any memory at will.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>Can I use a real embedding model?<span class="q-ico"></span></summary>
+        <div class="a">Yes. Lazy <code>SentenceTransformer</code> and <code>OpenAI</code> embedder adapters are included and load only when you ask for them. The dependency-free <code>HashingEmbedder</code> is just the default so the library works out of the box, offline.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>What is Layer V, the diary?<span class="q-ico"></span></summary>
+        <div class="a">An <b>optional</b>, off-by-default layer that keeps a bounded, hierarchical narrative of the conversation — a time-pyramid of rolling daily entries folded into epoch sections, written via the outbox. Delete the <code>layers/diary/</code> folder and Nexus runs exactly as before.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>How fast is it — and does it scale?<span class="q-ico"></span></summary>
+        <div class="a">Retrieval is an indexed <code>vec0</code> cosine KNN plus a cheap multi-signal score — <b>~3&nbsp;ms</b> to assemble a context locally. Writes run on a background pipeline, and WAL mode keeps reads and writes concurrent on the shared connection.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>What are the requirements and license?<span class="q-ico"></span></summary>
+        <div class="a">Python 3.11+, with SQLite&nbsp;+&nbsp;sqlite-vec, pydantic and numpy. It's <b>MIT</b> licensed — drop it in and keep both the model and the data yours.</div>
+      </details>
+    </div>
+  </div>
+</section>
