@@ -66,7 +66,7 @@ produces a `ValidationError` whose `ctx.expected` lists the valid actions.
 The two **diary actions** are special: they are validated and routed by the diary layer's
 own models in
 [`layers/diary/models.py`](../../src/nexus_memory/layers/diary/models.py) **before** the
-core dispatcher runs, and **only** when `NexusMemory(diary=DiaryConfig(enabled=True))`.
+core dispatcher runs, and **only** when `NexusMemory(diary=True)`.
 When the diary is off, those actions fall through to the normal unknown-action error. See
 the [diary layer](../architecture/diary-layer.md) and
 [diary configuration](../configuration/diary-config.md).

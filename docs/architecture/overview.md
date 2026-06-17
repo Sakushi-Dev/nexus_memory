@@ -105,6 +105,20 @@ NexusMemory(
 
 See [Nexus Configuration](../configuration/nexus-config.md) for every field and default, [Embedders](../usage/embedders.md) for swapping the vectorizer, and [Privacy & Encryption](../use-cases/privacy-and-encryption.md) for the opt-in PII and SQLCipher subsystems.
 
+## Dependencies
+
+The default path is intentionally lean — three small runtime dependencies, no ML stack, no network:
+
+| Dependency | Role |
+|------------|------|
+| [`sqlite-vec`](https://github.com/asg017/sqlite-vec) `>=0.1.9` | The `vec0` virtual table and indexed cosine-KNN behind semantic search; loaded as a SQLite extension at connect time (see [Persistence](persistence.md)). |
+| [`pydantic`](https://docs.pydantic.dev) `>=2.12` | Strict v2 models that validate every `process()` payload before it reaches a layer (see [Request / Response](../io/request-response.md)). |
+| [`numpy`](https://numpy.org) `>=2.0` | Vector math on the read path — cosine similarity in the semantic cache and the scoring functions (see [Retrieval & Scoring](retrieval-and-scoring.md)). |
+
+Everything else is the Python standard library (`sqlite3`, `threading`, `hashlib`, `xml.sax.saxutils`, …). The default embedder, extractor, summarizer, and directive detector pull in **nothing extra** — that is what makes the default path fully offline and deterministic.
+
+Heavier or networked embedders are **optional extras**, lazily imported so they are never touched unless you explicitly construct one: `sentence-transformers` (local transformer embeddings) and `openai` (hosted embeddings). See [Embedders](../usage/embedders.md) for the install extras and trade-offs.
+
 ## Where to go next
 
 - [Memory Layers](memory-layers.md) — per-layer schema, methods, and persistence detail.

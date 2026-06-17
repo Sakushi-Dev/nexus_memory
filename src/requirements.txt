@@ -1,0 +1,9 @@
+# Runtime dependencies for the nexus_memory module (mirrors pyproject.toml).
+# Install with:  pip install -r requirements.txt
+sqlite-vec>=0.1.9
+pydantic>=2.12
+numpy>=2.0
+
+# Optional embedder backends — uncomment only the one(s) you use:
+# sentence-transformers>=2.2   # SentenceTransformerEmbedder (local transformer embeddings)
+# openai>=1.0                  # OpenAIEmbedder (hosted embeddings)

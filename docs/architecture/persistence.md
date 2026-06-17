@@ -7,7 +7,7 @@ documents the storage model, every table grouped by its owning layer, the
 `__DIM__` substitution applied at init, and the `vec0` gotchas that shape the
 design.
 
-All SQL described here lives in [`schema.sql`](../../schema.sql),
+All SQL described here lives in [`schema.sql`](../../src/nexus_memory/schema.sql),
 [`core/db.py`](../../src/nexus_memory/core/db.py), and the per-layer stores under
 [`src/nexus_memory/layers/`](../../src/nexus_memory/layers/).
 
@@ -78,7 +78,7 @@ collapse the WAL.
 ## The `__DIM__` substitution
 
 The vector table's dimension is **fixed at table-creation time** and must match
-the active embedder. Rather than hard-code it, [`schema.sql`](../../schema.sql)
+the active embedder. Rather than hard-code it, [`schema.sql`](../../src/nexus_memory/schema.sql)
 carries the literal token `__DIM__`, and `NexusDB` replaces it with
 `config.dim` (default **768**, see [`DEFAULT_DIM`](../../src/nexus_memory/core/config.py))
 before `executescript`:

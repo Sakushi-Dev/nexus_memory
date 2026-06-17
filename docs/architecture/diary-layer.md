@@ -214,7 +214,7 @@ When the layer is active, `DiaryContextProvider` ([`provider.py`](../../src/nexu
 
 The diary is a **clean bolt-on**:
 
-- The layer is built only when `NexusMemory(diary=DiaryConfig(enabled=True))` is passed. Otherwise `self._diary is None`: no diary tables are created, the two diary actions are unknown (a normal validation error), and the convenience wrappers return `{"status":"error","error":"diary layer not enabled"}`.
+- The layer is built only when the diary is opted in — `NexusMemory(diary=True)`, or an explicit `DiaryConfig(enabled=True)` for custom knobs (`diary=True` is normalized to the latter). Otherwise `self._diary is None`: no diary tables are created, the two diary actions are unknown (a normal validation error), and the convenience wrappers return `{"status":"error","error":"diary layer not enabled"}`.
 - The **only** existing files that change are:
   - `core/orchestrator.py` — all diary wiring is guarded by the `diary` flag (build the layer, append its consolidator, register its provider, route the two actions before `core.models.parse_request`, call `finalize()` on close).
   - `core/context.py` — a single generic, diary-agnostic ~10-line seam: a `context_providers` list the `ContextAssembler` iterates after its three built-in sections. Any future layer reuses it (see [Extension Points](extension-points.md)).
@@ -225,9 +225,9 @@ For how the layer wires into orchestration and persistence, see [Persistence](pe
 ## End-to-end example (offline, a deterministic stub "model")
 
 ```python
-from nexus_memory import NexusMemory, DiaryConfig
+from nexus_memory import NexusMemory
 
-m = NexusMemory(db_path="diary_demo.db", diary=DiaryConfig(enabled=True))
+m = NexusMemory(diary=True)   # db_path defaults to "nexus_memory.db"
 
 # Three interactions cross the N=3 cadence -> a daily job is enqueued.
 for i in range(3):

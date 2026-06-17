@@ -44,7 +44,7 @@ A single `ingest` consolidates across layers, and one `assemble` returns a unifi
 | **IV** | Procedural | "How should I behave?" | SQLite | Standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context. |
 | **V** | Diary *(optional, off by default)* | "What is the long-arc narrative?" | SQLite (only when enabled) | A bounded time-pyramid of model-written summaries, driven through a handoff outbox — the library never calls an LLM itself. |
 
-Layers I–IV fan out from a single `ingest`; the diary (Layer V) is opt-in via `NexusMemory(diary=DiaryConfig(enabled=True))`. The deep design of each layer is covered under [Architecture](#architecture).
+Layers I–IV fan out from a single `ingest`; the diary (Layer V) is opt-in via `NexusMemory(diary=True)`. The deep design of each layer is covered under [Architecture](#architecture).
 
 ## Documentation map
 
@@ -78,6 +78,7 @@ Getting productive with the library.
 |------|--------|
 | [Getting started](usage/getting-started.md) | Install, construct, ingest, wait, assemble. |
 | [API reference](usage/api-reference.md) | Every action, request schema, response shape, and convenience wrapper. |
+| [Configuration](usage/configuration.md) | One-stop map of every setting: constructor args, all `NexusConfig` fields, and `DiaryConfig`. |
 | [Embedders](usage/embedders.md) | The default `HashingEmbedder` plus the `SentenceTransformer` and `OpenAI` adapters. |
 | [Transparency](usage/transparency.md) | `inspect`, `forget`, `pin`, and `update` your own memories. |
 
@@ -119,15 +120,19 @@ Every payload carries an `action`, passed to `memory.process(...)`. Full schemas
 | `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[...]}` |
 | `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
 
-## Install
+## Setup
 
-Requires Python ≥ 3.11. Install editable into the project-local virtual environment:
+There is **no install step** — the importable module is the self-contained [`src/nexus_memory/`](../src/nexus_memory) package. Requires Python ≥ 3.11.
 
 ```sh
-./.venv/Scripts/python.exe -m pip install -e .
+# 1. Get the code.
+git clone https://github.com/Sakushi-Dev/nexus_memory.git
+
+# 2. Install the dependencies the module needs.
+pip install -r nexus_memory/src/requirements.txt
 ```
 
-Optional extras: `.[sentence-transformers]`, `.[openai]`, `.[dev]`. See [Getting started](usage/getting-started.md) for the full setup, and [NexusConfig](configuration/nexus-config.md) to tune every default.
+Then **copy** the `src/nexus_memory/` folder into your project, or **add** the clone's `src/` directory to your `PYTHONPATH`. The optional embedder backends (`sentence-transformers`, `openai`) are listed, commented out, in [`src/requirements.txt`](../src/requirements.txt). See [Getting started](usage/getting-started.md) for the full setup, and [NexusConfig](configuration/nexus-config.md) to tune every default.
 
 ## License
 

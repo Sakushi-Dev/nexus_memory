@@ -77,6 +77,47 @@ These mirror the four-layer architecture (see [Memory layers](../architecture/me
 
 > Layer III (semantic) has no on/off switch — it is the always-on vector store. Layer V (the hierarchical diary) is configured separately by [`DiaryConfig`](./diary-config.md), not by `NexusConfig`.
 
+## Beyond NexusConfig — the rest of the configuration surface
+
+`NexusConfig` holds the *tunable values*, but it is **not** everything you can configure on a `NexusMemory`. Three things live outside this dataclass on purpose. For a single map of all of them, see [Configuration (usage)](../usage/configuration.md).
+
+### Constructor collaborators (pluggable strategies)
+
+These are passed directly to the [`NexusMemory` constructor](../usage/api-reference.md#the-nexusmemory-constructor), not via `NexusConfig`, because they are *behaviors* (objects), not scalars. Each defaults to an offline, deterministic implementation, so the default path needs no network and no model download.
+
+| Constructor arg | Type | Default | Configures |
+| :-- | :-- | :-- | :-- |
+| `embedder` | `Embedder` | `HashingEmbedder(dim=config.dim)` | How text becomes vectors. Swap in the `SentenceTransformer`/`OpenAI` adapters — keep `config.dim` in sync. See [Embedders](../usage/embedders.md). |
+| `extractor` | `FactExtractor` | `SpeakerAwareExtractor` | How interactions become semantic facts (wired to `semantic_include_assistant`). |
+| `summarizer` | `Summarizer` | `MockSummarizer` | How the episodic (Layer II) day-summaries are produced. |
+| `detector` | `DirectiveDetector` | `MockDirectiveDetector` | How standing behavioral rules (Layer IV) are mined from interactions. |
+
+### Layer V (the diary) is configured separately
+
+The optional hierarchical diary is **off by default** and is *not* part of `NexusConfig`. Opt in at construction with `diary=True` (defaults) or a `DiaryConfig` for custom knobs:
+
+```python
+NexusMemory(diary=True)                                   # defaults
+NexusMemory(diary=DiaryConfig(enabled=True, update_every=5))  # custom
+```
+
+Its knobs (`update_every`, `section_size`, `max_sections`, `inject_days`) live in [`DiaryConfig`](./diary-config.md), not here.
+
+### Per-request overrides
+
+Two scoring values are overridable **per `assemble` call**, taking precedence over the `NexusConfig` defaults for that request only:
+
+| Request field | Overrides | Default |
+| :-- | :-- | :-- |
+| `top_k` | `default_top_k` | `5` |
+| `min_score` | `min_score` | `0.6` |
+
+```python
+memory.process({"action": "assemble", "query": "...", "top_k": 8, "min_score": 0.4})
+```
+
+See [Request & response](../io/request-response.md) for every per-action field.
+
 ## Field interactions
 
 ### `db_path` is overridden by the constructor
@@ -136,6 +177,7 @@ memory = NexusMemory(db_path="agent.db", config=cfg)
 
 ## Related pages
 
+- [Configuration (usage)](../usage/configuration.md) — one-stop map of every setting: constructor args, all `NexusConfig` fields, and `DiaryConfig`.
 - [DiaryConfig](./diary-config.md) — the separate, opt-in Layer V configuration.
 - [Tuning](./tuning.md) — guidance on choosing scoring, cache, and layer values.
 - [Retrieval and scoring](../architecture/retrieval-and-scoring.md) — how `decay_lambda`, `min_score`, and `default_top_k` combine.

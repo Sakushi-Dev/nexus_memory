@@ -12,25 +12,30 @@ A **local-first**, dependency-light agent-memory library for Python. It gives an
 - **Privacy by design** — an opt-in regex [PII filter](src/nexus_memory/core/privacy.py) masks emails/phones/names *before* embedding (off by default on the local path; turn it on for external embedding APIs). An optional SQLCipher [encryption](src/nexus_memory/core/security.py) hook stays off the critical path.
 - **User-centric** — by default only the *user's* statements become semantic facts; assistant prose goes to the episodic diary, not the vector store.
 
-## Install
+## Setup
 
-Requires Python ≥ 3.11.
-
-**As a dependency** — install just the `nexus_memory` package (no tests, docs, or examples) straight from GitHub:
+There is **no install step**. The importable module is the self-contained [`src/nexus_memory/`](src/nexus_memory) package — add it to your project and `import nexus_memory` just works. Requires Python ≥ 3.11.
 
 ```sh
-pip install "git+https://github.com/Sakushi-Dev/nexus_memory.git"
-```
-
-**For development** — clone the full repository (module plus tests, docs, and examples) and install it editable:
-
-```sh
+# 1. Get the code.
 git clone https://github.com/Sakushi-Dev/nexus_memory.git
-cd nexus_memory
-./.venv/Scripts/python.exe -m pip install -e .
+
+# 2. Install the dependencies the module needs.
+pip install -r nexus_memory/src/requirements.txt
 ```
 
-Optional extras: `.[sentence-transformers]`, `.[openai]`, `.[dev]`.
+Then make the package importable in your project — either:
+
+- **copy** the [`src/nexus_memory/`](src/nexus_memory) folder into your project tree, next to your own code; or
+- **add** the clone's `src/` directory to your `PYTHONPATH` and import it in place.
+
+```python
+import nexus_memory  # works once src/nexus_memory/ is on the path
+```
+
+The only requirement is that the module can reach its dependencies, pinned in [`src/requirements.txt`](src/requirements.txt). The optional embedder backends (`sentence-transformers`, `openai`) are listed there, commented out — uncomment what you need (see [Embedders](docs/usage/embedders.md)).
+
+> **Driving it from another language?** Every request and response is a plain `dict` (or JSON string) through one `process()` entry point, so the module can sit behind a thin Python bridge (subprocess, stdin/stdout JSON, or a small socket/IPC shim) and be called from any language — no Python-specific objects cross the boundary.
 
 ## Quickstart
 
@@ -64,7 +69,7 @@ A single `ingest` consolidates across layers, and `assemble` returns one unified
 - **II. Episodic** ([`episodic/`](src/nexus_memory/layers/episodic/episodic.py)) — persistent raw dialogue plus deterministic narrative day-summaries.
 - **III. Semantic** ([`semantic/`](src/nexus_memory/layers/semantic/reader.py), [`core/db.py`](src/nexus_memory/core/db.py)) — decontextualized fact vectors retrieved by cosine KNN, graph-expanded, then re-ranked by `similarity × importance × exp(-λ · days)`.
 - **IV. Procedural** ([`procedural.py`](src/nexus_memory/layers/procedural/procedural.py)) — standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context.
-- **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded time-pyramid of model-written summaries; enable with `NexusMemory(diary=DiaryConfig(enabled=True))`, then drain `pending_summaries()` and return text via `submit_summary()`.
+- **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded time-pyramid of model-written summaries; enable with `NexusMemory(diary=True)`, then drain `pending_summaries()` and return text via `submit_summary()`.
 
 ## Actions
 

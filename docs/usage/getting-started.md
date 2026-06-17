@@ -1,45 +1,44 @@
 # Getting Started
 
-This page takes you from a clean checkout to a working, fully offline memory loop: install Nexus Memory, construct a [`NexusMemory`](../../src/nexus_memory/core/orchestrator.py), ingest one interaction, assemble a prompt-ready context, inspect the store, and close cleanly. Everything here runs on the default, dependency-free [`HashingEmbedder`](../../src/nexus_memory/core/embeddings.py) — no network, no model download, no server.
+This page takes you from a clean checkout to a working, fully offline memory loop: set up Nexus Memory, construct a [`NexusMemory`](../../src/nexus_memory/core/orchestrator.py), ingest one interaction, assemble a prompt-ready context, inspect the store, and close cleanly. Everything here runs on the default, dependency-free [`HashingEmbedder`](../../src/nexus_memory/core/embeddings.py) — no network, no model download, no server.
 
 ## Requirements
 
-- **Python ≥ 3.11** (declared as `requires-python = ">=3.11"` in [`pyproject.toml`](../../pyproject.toml)).
-- The three runtime dependencies are installed automatically: `sqlite-vec>=0.1.9`, `pydantic>=2.12`, and `numpy>=2.0`. No external services and no LLM are required on the default path.
+- **Python ≥ 3.11.**
+- Three runtime dependencies, pinned in [`src/requirements.txt`](../../src/requirements.txt): `sqlite-vec>=0.1.9`, `pydantic>=2.12`, and `numpy>=2.0`. No external services and no LLM are required on the default path.
 
-## Install
+## Setup
 
-Install editable from the repository root. Using the project-local virtual environment keeps the install isolated:
+There is **no install step** — the importable module is the self-contained `src/nexus_memory/` package. Clone the repository, install the dependencies, and make the package importable in your project:
 
 ```sh
-./.venv/Scripts/python.exe -m pip install -e .
+# 1. Get the code.
+git clone https://github.com/Sakushi-Dev/nexus_memory.git
+
+# 2. Install the dependencies the module needs.
+pip install -r nexus_memory/src/requirements.txt
 ```
 
-On a generic shell the equivalent is `python -m pip install -e .` from the repo root.
+Then make the package importable — either **copy** the `src/nexus_memory/` folder into your project, or **add** the clone's `src/` directory to your `PYTHONPATH`.
 
-### Optional extras
+### Optional embedder backends
 
-The defaults need none of these. Install an extra only when you want the corresponding adapter or the test suite:
+The defaults need none of these. The optional backends are listed, commented out, in [`src/requirements.txt`](../../src/requirements.txt) — uncomment the one you want (or `pip install` it directly):
 
-| Extra | Command | Pulls in | Enables |
-|-------|---------|----------|---------|
-| `sentence-transformers` | `pip install -e ".[sentence-transformers]"` | `sentence-transformers>=2.2` | [`SentenceTransformerEmbedder`](embedders.md) (local transformer embeddings) |
-| `openai` | `pip install -e ".[openai]"` | `openai>=1.0` | [`OpenAIEmbedder`](embedders.md) (hosted embeddings) |
-| `dev` | `pip install -e ".[dev]"` | `pytest>=8.0` | running the test suite |
+| Backend | Install | Enables |
+|---------|---------|---------|
+| `sentence-transformers>=2.2` | `pip install sentence-transformers` | [`SentenceTransformerEmbedder`](embedders.md) (local transformer embeddings) |
+| `openai>=1.0` | `pip install openai` | [`OpenAIEmbedder`](embedders.md) (hosted embeddings) |
 
 Both embedder adapters are **lazy-imported** — the library never touches `sentence-transformers` or `openai` unless you explicitly construct one of those embedders. See [Embedders](embedders.md) for how to wire one up (and keep `config.dim` in sync).
 
-### Verify the install
+### Verify it imports
 
 ```sh
-./.venv/Scripts/python.exe -c "from nexus_memory import NexusMemory; print('ok')"
+python -c "from nexus_memory import NexusMemory; print('ok')"
 ```
 
-The dev extra also lets you run the tests:
-
-```sh
-./.venv/Scripts/python.exe -m pytest -q
-```
+To run the test suite from a clone, install `pytest` (`pip install pytest`) and run `python -m pytest -q` from the repository root.
 
 ## Quickstart: an end-to-end loop
 
@@ -181,7 +180,7 @@ memory.close()
 - **Ingest is asynchronous.** Call `wait()` before any read that must observe newly ingested facts, and always `close()` in a `try/finally`.
 - **`db_path` wins over `config.db_path`** — pass the path you want as the positional argument.
 - **`dim` is locked at table creation.** Keep `config.dim` and the embedder's dimension in sync from the very first run; changing it later requires a re-embed/migration.
-- **The diary (Layer V) is off by default.** It only exists when you pass `NexusMemory(diary=DiaryConfig(enabled=True))`.
+- **The diary (Layer V) is off by default.** It only exists when you pass `NexusMemory(diary=True)` (or an explicit `DiaryConfig(enabled=True)`).
 
 ## Next steps
 

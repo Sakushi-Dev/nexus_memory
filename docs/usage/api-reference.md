@@ -376,7 +376,7 @@ Promote standing-preference patterns from high-importance semantic facts
 
 ## Action: `pending_summaries` (diary-only)
 
-> Requires `NexusMemory(diary=DiaryConfig(enabled=True))`. When the diary is off,
+> Requires `NexusMemory(diary=True)`. When the diary is off,
 > this action is unknown and `process()` returns a validation error.
 
 Drain the diary outbox — return the pending summarization jobs the host must run on

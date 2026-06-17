@@ -1,6 +1,6 @@
 # Use Case: Hierarchical Diary via Outbox
 
-This page shows how a host integrates Nexus Memory's optional fifth layer — a self-managing, bounded **diary** that compresses raw dialogue into a time-pyramid of narrative summaries **without the module ever calling an LLM itself**. You enable it with `NexusMemory(diary=DiaryConfig(enabled=True))`, then run a small **drain loop**: `pending_summaries()` yields jobs, your code runs each job's `prompt` on *any* model, and `submit_summary(job_id, text)` folds the result back into the pyramid.
+This page shows how a host integrates Nexus Memory's optional fifth layer — a self-managing, bounded **diary** that compresses raw dialogue into a time-pyramid of narrative summaries **without the module ever calling an LLM itself**. You enable it with `NexusMemory(diary=True)`, then run a small **drain loop**: `pending_summaries()` yields jobs, your code runs each job's `prompt` on *any* model, and `submit_summary(job_id, text)` folds the result back into the pyramid.
 
 For the layer's internals (tables, trigger state machine, context injection) see the [Diary Layer architecture](../architecture/diary-layer.md). For the config knobs see [Diary Config](../configuration/diary-config.md). This page is the **integration recipe**.
 
@@ -27,9 +27,9 @@ ingest ──(due?)──▶ enqueue job ──▶ [ summarization_jobs (outbox)
 The diary is **off by default** and fully additive. With no `DiaryConfig`, the layer is never constructed: no new tables, no new context sections, no new actions. Opt in explicitly:
 
 ```python
-from nexus_memory import NexusMemory, DiaryConfig
+from nexus_memory import NexusMemory
 
-memory = NexusMemory(db_path="diary.db", diary=DiaryConfig(enabled=True))
+memory = NexusMemory(db_path="nexus.db", diary=True)
 ```
 
 [`DiaryConfig`](../configuration/diary-config.md) (`src/nexus_memory/layers/diary/config.py`) is the diary's own dataclass — nothing is added to `NexusConfig`:
@@ -148,10 +148,10 @@ The driver: opt in to the layer, ingest three interactions to cross the `N=3` ca
 ```python
 import tempfile
 from pathlib import Path
-from nexus_memory import DiaryConfig, NexusMemory
+from nexus_memory import NexusMemory
 
-db_path = str(Path(tempfile.mkdtemp()) / "diary.db")
-memory = NexusMemory(db_path=db_path, diary=DiaryConfig(enabled=True))
+db_path = str(Path(tempfile.mkdtemp()) / "nexus.db")
+memory = NexusMemory(db_path=db_path, diary=True)
 try:
     interactions = [
         ("My name is Chris and I'm building a memory library.",
@@ -212,7 +212,7 @@ See [Data Flow](../io/data-flow.md) for where these sections land in the assembl
 
 ## Integration checklist
 
-- Enable with `NexusMemory(diary=DiaryConfig(enabled=True))`; tune `update_every`, `section_size`, `max_sections` via [Diary Config](../configuration/diary-config.md).
+- Enable with `NexusMemory(diary=True)`; tune `update_every`, `section_size`, `max_sections` with an explicit `DiaryConfig` via [Diary Config](../configuration/diary-config.md).
 - After ingests (and before relying on the outbox), call `memory.wait()` so scheduling has committed.
 - Run a drain loop: `pending_summaries()` → run `job["prompt"]` on your model with `job["prior_summary"]` + `job["input"]` → `submit_summary(job["job_id"], text)`.
 - Drain on your own schedule — a lagging outbox is safe; the diary just trails behind.
