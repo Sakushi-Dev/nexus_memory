@@ -19,8 +19,6 @@ Run it::
     python examples/diary_outbox.py
 """
 
-from __future__ import annotations
-
 from nexus_memory import NexusMemory
 
 

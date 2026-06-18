@@ -433,6 +433,11 @@ class NexusMemory:
         folded back in via :meth:`submit_summary`. Returns the number of jobs
         applied (0 when the diary layer is not enabled).
 
+        When the diary is enabled and a job is pending but ``run_job`` returns no
+        summary (an empty result, or a host that swallowed a model error), the job
+        is skipped and a ``WARNING`` is logged -- so a silently broken host model
+        surfaces instead of leaving the diary entry blank.
+
         Nexus still never calls an LLM itself -- run_job is the host's model.
         """
         if self._diary is None:
@@ -443,6 +448,15 @@ class NexusMemory:
             if text:
                 self.submit_summary(job["job_id"], text)
                 applied += 1
+            else:
+                logger.warning(
+                    "drain_diary: host run_job returned no summary for %s job %r "
+                    "(period %r); the diary is enabled so this job stays pending -- "
+                    "check the host model (e.g. a removed/invalid aux model).",
+                    job.get("kind", "?"),
+                    job.get("job_id", "?"),
+                    job.get("period"),
+                )
         return applied
 
     def forget(self, **kw: Any) -> dict:
