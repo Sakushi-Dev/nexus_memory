@@ -18,6 +18,35 @@
   position: sticky; top: 57px; align-self: start; height: calc(100vh - 57px); overflow-y: auto;
   border-right: 1px solid var(--line); padding: 26px 18px 60px;
 }
+/* search */
+.docs-search { position: relative; display: flex; align-items: center; margin-bottom: 22px; }
+.docs-search-icon { position: absolute; left: 11px; width: 15px; height: 15px; color: var(--faint); pointer-events: none; }
+.docs-search input {
+  width: 100%; padding: 9px 34px 9px 34px; font-family: var(--font); font-size: 13.5px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px; outline: none; transition: .15s;
+}
+.docs-search input::placeholder { color: var(--faint); }
+.docs-search input:focus { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.16); }
+.docs-search kbd {
+  position: absolute; right: 9px; font-family: var(--mono); font-size: 11px; color: var(--faint);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; line-height: 1.5;
+}
+.docs-search input:focus ~ kbd, .docs-search input:not(:placeholder-shown) ~ kbd { opacity: 0; }
+
+/* search results (replace the nav while a query is active) */
+.docs-results { display: flex; flex-direction: column; gap: 4px; }
+.docs-results-empty { color: var(--faint); font-size: 13px; padding: 6px 10px; }
+.docs-result {
+  display: block; padding: 9px 11px; border-radius: 10px; border: 1px solid transparent; transition: .12s;
+}
+.docs-result:hover, .docs-result.sel { background: var(--surface-2); border-color: var(--line); }
+.docs-result.sel { box-shadow: inset 2px 0 0 var(--accent); }
+.docs-result-crumb { display: block; font-size: 13px; color: var(--text); margin-bottom: 2px; }
+.docs-result-crumb .sep { color: var(--faint); margin: 0 4px; }
+.docs-result-snip { display: block; font-size: 12px; line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.docs-result mark, .docs-result-crumb mark { background: rgba(124, 92, 255, 0.28); color: var(--text); border-radius: 3px; padding: 0 1px; }
+
 .docs-group { margin-bottom: 22px; }
 .docs-group-label { font-family: var(--mono); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--faint); margin: 0 0 8px 10px; }
 .docs-link { display: block; padding: 7px 12px; border-radius: 9px; color: var(--muted); font-size: 14px; border: 1px solid transparent; transition: .14s; }

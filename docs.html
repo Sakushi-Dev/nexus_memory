@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#7c5cff" />
   <title>Docs · Nexus Memory</title>
-  <meta name="description" content="Documentation for the Nexus Memory Module — architecture, the diary, validation, contracts and the build log." />
+  <meta name="description" content="Documentation for the Nexus Memory module — architecture, the five memory layers, the diary, I/O contract, usage, configuration and use cases." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
@@ -18,7 +18,21 @@
   <header class="docs-top">
     <button class="side-toggle" data-side-toggle aria-label="Menu"><span></span></button>
     <a class="brand" href="index.html">
-      <span class="brand-mark">◆</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="42" height="42" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="bm-g" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#7c5cff"/>
+              <stop offset="0.55" stop-color="#22d3ee"/>
+              <stop offset="1" stop-color="#34d399"/>
+            </linearGradient>
+          </defs>
+          <rect x="3" y="3" width="42" height="42" rx="11" stroke="url(#bm-g)" stroke-width="3"/>
+          <line x1="3" y1="24" x2="45" y2="24" stroke="url(#bm-g)" stroke-width="3"/>
+          <polygon points="24,9 37,24 24,39 11,24" fill="url(#bm-g)"/>
+          <polygon points="24,16 31,24 24,32 17,24" fill="#0a0c11"/>
+        </svg>
+      </span>
       <span>Nexus Memory <small>· docs</small></span>
     </a>
     <div class="docs-top-actions">
@@ -29,7 +43,15 @@
   </header>
 
   <div class="docs-shell">
-    <aside class="docs-side"><nav id="docs-nav"></nav></aside>
+    <aside class="docs-side">
+      <div class="docs-search">
+        <svg class="docs-search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 21l-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="docs-search-input" type="search" placeholder="Search docs…" autocomplete="off" spellcheck="false" aria-label="Search docs" />
+        <kbd>/</kbd>
+      </div>
+      <div id="docs-search-results" class="docs-results" hidden></div>
+      <nav id="docs-nav"></nav>
+    </aside>
     <main class="docs-main"><article id="docs-content" class="md"></article></main>
   </div>
 
