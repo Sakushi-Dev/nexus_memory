@@ -109,7 +109,7 @@ Every payload carries an `action`, passed to `memory.process(...)`:
 | `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[{job_id, kind, period, prompt, prior_summary, input}, ...]}` |
 | `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
 
-Convenience wrappers: `inspect(...)`, `forget(...)`, `wait(...)`, `close()`, `remember_rule(...)`, `list_rules()`, `diary(...)`, `working_snapshot()`, `reconstruct(...)`, `distill()`, plus `pending_summaries(...)` / `submit_summary(...)` when the diary is enabled.
+Convenience wrappers: `inspect(...)`, `forget(...)`, `wait(...)`, `close()`, `remember_rule(...)`, `list_rules()`, `diary(...)`, `working_snapshot()`, `reconstruct(...)`, `history(...)`, `distill()`, plus `pending_summaries(...)` / `submit_summary(...)` when the diary is enabled.
 
 Tune everything (scoring, dedup threshold, cache, privacy, per-layer settings) via [`NexusConfig`](src/nexus_memory/core/config.py).
 

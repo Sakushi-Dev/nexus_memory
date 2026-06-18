@@ -484,6 +484,136 @@ class NexusMemory:
         """Return a human-readable transcript of the episodic dialogue history."""
         return self.episodic.reconstruct(time_range=time_range)
 
+    def _history_source(self) -> list[dict]:
+        """Return candidate turns as ``[{role, content, timestamp}]`` (newest-last).
+
+        Mirrors :meth:`ContextAssembler._recent_dialogue`'s source selection:
+        the durable episodic store when ``episodic_enabled``, otherwise the
+        volatile working buffer. Pulls a generous candidate window so the token
+        truncation mode has enough material to fill its budget; episodic's extra
+        keys (``id``, ``session_id``, ``metadata``) are dropped.
+        """
+        n = max(
+            int(self.config.history_max_turns),
+            int(self.config.working_memory_max_turns),
+        )
+        if self.config.episodic_enabled:
+            turns = self.episodic.recent_turns(n)
+            return [
+                {
+                    "role": t.get("role", ""),
+                    "content": t.get("content", ""),
+                    "timestamp": t.get("timestamp", ""),
+                }
+                for t in turns
+            ]
+        return [t.to_dict() for t in self.working.recent(n)]
+
+    def history(
+        self,
+        *,
+        role: str | None = None,
+        max_turns: int | None = None,
+        max_tokens: int | None = None,
+        token_counter: "Callable[[str], int] | None" = None,
+        as_format: str = "messages",
+        template: str = "{role}: {content}",
+    ) -> "str | list[dict]":
+        """Return the conversation history as a native LLM message history.
+
+        Reads from the durable episodic layer (or, when ``episodic_enabled`` is
+        ``False``, the volatile working buffer), filtered and truncated for direct
+        use as a chat history. Turns are always chronological (newest-last).
+
+        Parameters
+        ----------
+        role:
+            Keep only turns with this role (``"user"`` or ``"assistant"``).
+            ``None`` (default) keeps both. Any other value raises ``ValueError``.
+        max_turns:
+            Explicit cap on the number of turns kept (turns mode).
+        max_tokens:
+            Explicit token budget (tokens mode). Takes precedence over
+            ``max_turns`` when both are given.
+        token_counter:
+            Optional ``(str) -> int`` used in tokens mode. Defaults to the
+            ``len(s) // 4`` heuristic (matching ``WorkingMemory.token_estimate``).
+        as_format:
+            ``"messages"`` → ``[{role, content}]`` (default); ``"turns"`` →
+            ``[{role, content, timestamp}]``; ``"string"`` → a newline-joined
+            transcript rendered via ``template``. Any other value raises
+            ``ValueError``.
+        template:
+            Per-turn format string for ``as_format="string"`` (default
+            ``"{role}: {content}"``).
+
+        Returns
+        -------
+        A ``list[dict]`` for ``"messages"``/``"turns"`` (``[]`` when empty), or a
+        ``str`` for ``"string"`` (``""`` when empty).
+        """
+        if as_format not in {"messages", "turns", "string"}:
+            raise ValueError(
+                "as_format must be 'messages', 'turns' or 'string', "
+                f"got {as_format!r}"
+            )
+        if role is not None and role not in {"user", "assistant"}:
+            raise ValueError(
+                f"role must be 'user', 'assistant' or None, got {role!r}"
+            )
+
+        turns = self._history_source()
+
+        # Role filter.
+        if role is not None:
+            turns = [t for t in turns if t.get("role") == role]
+
+        # Truncation — explicit args win over config defaults.
+        if max_tokens is not None:
+            mode, budget = "tokens", max_tokens
+        elif max_turns is not None:
+            mode, budget = "turns", max_turns
+        elif self.config.history_truncation == "tokens":
+            mode, budget = "tokens", int(self.config.history_token_budget)
+        else:
+            mode, budget = "turns", int(self.config.history_max_turns)
+
+        if budget <= 0:
+            turns = []
+        elif mode == "turns":
+            turns = turns[-budget:]
+        else:  # tokens — keep the newest suffix that fits the budget.
+            counter = token_counter or (lambda s: len(s) // 4)
+            kept: list[dict] = []
+            total = 0
+            for t in reversed(turns):
+                cost = counter(t.get("content", ""))
+                if total + cost > budget:
+                    break
+                total += cost
+                kept.append(t)
+            turns = list(reversed(kept))  # restore chronological order
+
+        # Format.
+        if as_format == "messages":
+            return [
+                {"role": t.get("role", ""), "content": t.get("content", "")}
+                for t in turns
+            ]
+        if as_format == "turns":
+            return [
+                {
+                    "role": t.get("role", ""),
+                    "content": t.get("content", ""),
+                    "timestamp": t.get("timestamp", ""),
+                }
+                for t in turns
+            ]
+        return "\n".join(
+            template.format(role=t.get("role", ""), content=t.get("content", ""))
+            for t in turns
+        )
+
     def distill(self) -> dict:
         """Promote standing-preference semantic facts into procedural rules.
 

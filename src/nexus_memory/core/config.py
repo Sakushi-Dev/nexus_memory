@@ -58,9 +58,22 @@ class NexusConfig:
     episodic_recent_turns: int = 6      # how many recent turns assemble injects
     episodic_enabled: bool = True
 
+    # --- history accessor (NexusMemory.history) ---
+    history_truncation: str = "turns"   # "turns" | "tokens"
+    history_max_turns: int = 20         # default cap for "turns" mode
+    history_token_budget: int = 2000    # default budget for "tokens" mode
+
     # --- procedural (Layer IV, behavioral rules) ---
     procedural_max_directives: int = 12  # cap active directives injected into context
     procedural_enabled: bool = True
 
     # --- consolidation (inter-layer transfer) ---
     auto_consolidate: bool = True       # ingest also logs episodic + detects rules
+
+    def __post_init__(self) -> None:
+        """Validate the history-accessor truncation mode."""
+        if self.history_truncation not in {"turns", "tokens"}:
+            raise ValueError(
+                "history_truncation must be 'turns' or 'tokens', "
+                f"got {self.history_truncation!r}"
+            )

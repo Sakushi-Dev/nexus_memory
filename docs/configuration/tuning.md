@@ -276,7 +276,7 @@ print(result["latency_ms"], result["meta"]["source_count"])
 
 > **Not a CI gate.** This benchmark is informational only — absolute numbers vary
 > with hardware, store size, embedder, and `top_k`. The
-> [test suite](../../tests/) (151 tests) gates correctness, not
+> [test suite](../../tests/) (159 tests) gates correctness, not
 > latency. Swapping in a heavier embedder (e.g. `SentenceTransformerEmbedder` or
 > a network-bound `OpenAIEmbedder`) shifts the cost onto `embedder.encode()` and
 > will dominate this figure.
