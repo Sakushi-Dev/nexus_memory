@@ -34,6 +34,7 @@
   --font:     'Ubuntu', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --mono:     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --tech:     'Share Tech Mono', var(--mono);
+  --display:  'Orbitron', var(--tech);
   --shadow:   0 24px 60px -28px rgba(0, 0, 0, 0.8);
 }
 
@@ -41,6 +42,10 @@
 
 /* registered custom prop so the gradient ANGLE can be smoothly animated */
 @property --flow-angle { syntax: "<angle>"; inherits: false; initial-value: 92deg; }
+
+/* registered coords so the bright grid "spotlight" can wander smoothly */
+@property --sx { syntax: "<percentage>"; inherits: false; initial-value: 22%; }
+@property --sy { syntax: "<percentage>"; inherits: false; initial-value: 28%; }
 
 html { scroll-behavior: smooth; }
 
@@ -78,6 +83,36 @@ a { color: inherit; text-decoration: none; }
   mask-image: radial-gradient(circle at 50% 22%, #000 0%, transparent 72%);
   opacity: 0.5;
 }
+/* a brighter copy of the same grid, revealed only inside a soft moving circle
+   so one patch of the lattice "lights up"; the circle wanders sporadically. */
+.bg-grid-spot {
+  position: absolute; inset: -2px; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(149, 123, 255, 0.62) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(149, 123, 255, 0.62) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(circle 300px at var(--sx) var(--sy), #000 0%, rgba(0,0,0,0.4) 46%, transparent 74%);
+          mask-image: radial-gradient(circle 300px at var(--sx) var(--sy), #000 0%, rgba(0,0,0,0.4) 46%, transparent 74%);
+  opacity: 0.9;
+  animation: grid-wander 46s cubic-bezier(0.65, 0, 0.35, 1) infinite; /* no-JS fallback */
+}
+/* Once loader.js runs it drives the spot for BOTH cursor-tracking and the idle
+   wander (animation off), so handing back from one to the other never jumps.
+   .drifting = the slow glide between idle points; default = snappy cursor follow. */
+.bg-grid-spot.js-driven { animation: none; transition: --sx 0.3s ease-out, --sy 0.3s ease-out; }
+.bg-grid-spot.js-driven.drifting { transition: --sx 2s cubic-bezier(0.45, 0, 0.4, 1), --sy 2s cubic-bezier(0.45, 0, 0.4, 1); }
+/* irregular keyframe spacing + dwell pairs (e.g. 0%,7%) make the motion feel
+   sporadic: the spot lingers, then drifts to a new, unrelated cell. */
+@keyframes grid-wander {
+  0%,   7%  { --sx: 22%; --sy: 28%; }
+  16%, 23%  { --sx: 74%; --sy: 19%; }
+  32%, 37%  { --sx: 87%; --sy: 63%; }
+  46%, 53%  { --sx: 39%; --sy: 81%; }
+  61%, 67%  { --sx: 11%; --sy: 54%; }
+  77%, 83%  { --sx: 59%; --sy: 43%; }
+  93%, 100% { --sx: 22%; --sy: 28%; }
+}
+@media (prefers-reduced-motion: reduce) { .bg-grid-spot { animation: none; } }
 .orb { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.5; animation: float 18s ease-in-out infinite; }
 .orb.a { width: 420px; height: 420px; top: -120px; right: -80px; background: rgba(124, 92, 255, 0.55); }
 .orb.b { width: 360px; height: 360px; bottom: -140px; left: -100px; background: rgba(34, 211, 238, 0.35); animation-delay: -6s; }
@@ -91,11 +126,11 @@ a { color: inherit; text-decoration: none; }
 .nav-inner { max-width: none; margin: 0; padding: 16px clamp(20px, 4vw, 46px); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 22px; }
 .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; letter-spacing: .2px; }
 .brand-mark {
-  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 6px 20px -6px rgba(124, 92, 255, 0.7); color: #0a0c11; font-weight: 700;
+  width: 44px; height: 44px; display: grid; place-items: center;
+  /* the SVG carries its own gradient frame — no chip background needed */
 }
-.brand small { color: var(--faint); font-weight: 400; font-family: var(--mono); font-size: 12px; }
+.brand-mark svg { display: block; width: 42px; height: 42px; filter: drop-shadow(0 4px 12px rgba(124, 92, 255, 0.45)); }
+.brand small { color: #ffffff54; font-weight: 400; font-family: var(--mono); font-size: 12px; }
 .nav-links { display: flex; gap: 26px; align-items: center; justify-self: center; }
 .nav-links a { color: var(--muted); font-size: 14.5px; transition: color .15s; }
 .nav-links a:hover { color: var(--text); }
@@ -131,7 +166,12 @@ a { color: inherit; text-decoration: none; }
 
 /* ---------------------------------------------------------------- hero ---- */
 .hero { padding-top: 70px; }
-.hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+.hero-grid { display: grid; grid-template-columns: 0.85fr 1.25fr; gap: 56px; align-items: start; }
+/* pin the copy to the top edge of the row, not centred against the (taller) demo */
+.hero-copy { align-self: start; }
+/* let the demo column honour its fr track instead of being forced wide by the
+   long code lines — min-width:0 lets the inner <pre> scroll (overflow-x:auto) */
+.hero-code { min-width: 0; }
 .tagpill {
   display: inline-flex; align-items: center; gap: 9px; font-size: 12.5px; font-family: var(--mono);
   color: var(--muted); border: 1px solid var(--line); background: var(--surface); padding: 6px 12px;
@@ -149,41 +189,43 @@ a { color: inherit; text-decoration: none; }
    different cycle so the motion feels aperiodic). The edge colour stays fixed. */
 .hero-name {
   display: block; text-align: center; white-space: nowrap; line-height: 1.22;
-  font-weight: 700; letter-spacing: -1px; font-size: clamp(32px, 8.4vw, 88px);
+  font-family: var(--display);
+  font-weight: 1100; letter-spacing: 2px; font-size: clamp(32px, 9vw, 88px);
   margin: 0 auto 42px; padding: 0.05em 0 0.14em;
-  /* mostly transparent in the centre; colour only clusters at the two ends, and
-     the flow animation slides those ends in/out so the SIDES colour sporadically.
+  /* both sides stay coloured at once — colour fills inward from each end and a
+     narrow transparent band (~30%) is left in the centre, so the fill tops out
+     around 70%. the flow only breathes that band; it never empties a side.
      the fill is much taller than the text (Y) so it never gets clipped vertically. */
   background: linear-gradient(var(--flow-angle),
-    var(--accent-ink) 0%, var(--accent) 15%, transparent 40%,
-    transparent 60%, var(--accent-2) 85%, var(--l5) 100%);
+    var(--accent-ink) 0%, var(--accent) 20%, transparent 43%,
+    transparent 57%, var(--accent-2) 80%, var(--l5) 100%);
   background-size: 200% 200%;
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;        /* show the gradient as the fill */
-  -webkit-text-stroke: 0.5px #ffffff7e;          /* static 0.5px white edge */
-  text-stroke: 0.5px #ffffff7e;
-  animation: bf-flow 24s ease-in-out infinite, bf-axis 34s ease-in-out infinite;
+  -webkit-text-stroke: 0.5px rgb(154, 78, 253);          /* static 0.5px white edge */
+  text-stroke: 1px var(--accent);
+  animation: bf-flow 28s ease-in-out infinite, bf-axis 56s linear infinite;
   will-change: background-position;
 }
-/* X and Y both capped at 75% (never reach 100%), drifting sporadically — the Y
-   movement + the wider angle drift give the axis a sporadic vertical component. */
+/* X stays near the centre (40–60%, capped well under 70%) so BOTH coloured ends
+   keep overlapping the text — the band only breathes left/right; the Y drift +
+   angle drift add a sporadic vertical component. */
 @keyframes bf-flow {
-  0%   { background-position: 6% 50%; }
-  22%  { background-position: 58% 35%; }
-  45%  { background-position: 38% 66%; }
-  64%  { background-position: 72% 44%; }
-  86%  { background-position: 22% 60%; }
-  100% { background-position: 6% 50%; }
+  0%   { background-position: 50% 50%; }
+  22%  { background-position: 60% 36%; }
+  45%  { background-position: 40% 64%; }
+  64%  { background-position: 58% 44%; }
+  86%  { background-position: 42% 60%; }
+  100% { background-position: 50% 50%; }
 }
+/* full continuous rotation of the gradient axis — the two coloured ends sweep
+   all the way around the name, 360° per cycle. */
 @keyframes bf-axis {
-  0%   { --flow-angle: 86deg; }
-  28%  { --flow-angle: 118deg; }
-  52%  { --flow-angle: 62deg; }
-  78%  { --flow-angle: 102deg; }
-  100% { --flow-angle: 86deg; }
+  from { --flow-angle: 0deg; }
+  to   { --flow-angle: 360deg; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hero-name { animation: none; background-position: 30% 50%; }
+  .hero-name { animation: none; background-position: 50% 50%; }
 }
 .hero p.sub { font-size: 18.5px; color: var(--muted); max-width: 54ch; margin: 0 0 28px; }
 .badges { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 30px; }
@@ -192,6 +234,24 @@ a { color: inherit; text-decoration: none; }
   background: var(--surface); padding: 6px 11px; border-radius: 8px;
 }
 .badge b { color: var(--text); font-weight: 500; }
+
+/* process() action index — compact chip-cards matching the card aesthetic */
+.actions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; }
+.action {
+  position: relative;
+  border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-sm);
+  padding: 13px 15px; display: flex; flex-direction: column; gap: 5px;
+  transition: transform .16s, border-color .16s, background .16s;
+}
+.action:hover { transform: translateY(-2px); border-color: var(--accent); background: var(--surface-2); }
+.action > code { font-family: var(--mono); font-size: 13px; color: var(--accent-ink); font-weight: 500; }
+.action span { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.action span code { font-family: var(--mono); font-size: .92em; color: var(--accent-ink); }
+.action .lv {
+  font-family: var(--mono); font-style: normal; font-size: 9.5px; line-height: 1; color: var(--l5);
+  border: 1px solid rgba(244, 114, 182, .4); border-radius: 5px; padding: 2px 5px;
+  position: absolute; top: 12px; right: 12px;
+}
 .btns { display: flex; flex-wrap: wrap; gap: 12px; }
 
 /* ----------------------------------------------------------- code window -- */
@@ -212,18 +272,99 @@ a { color: inherit; text-decoration: none; }
 .tok-c { color: var(--faint); font-style: italic; } .tok-n { color: #fbbf24; } .tok-p { color: #93a1bd; }
 
 /* ------------------------------------------------------------- features --- */
-.features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+/* a continuously scrolling wall of testimonial-style cards (pauses on hover) */
+.marquee {
+  margin-inline: -150px;                             /* bleed 150px past the container each side */
+  overflow-x: hidden; overflow-y: visible;          /* clip only left/right; let the hover-lift breathe */
+  padding: 18px 0;                                   /* vertical room so a lifted card isn't cut off */
+  display: flex; flex-direction: column; gap: 16px;  /* two stacked rows */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+@media (max-width: 1200px) { .marquee { margin-inline: 0; } }  /* no bleed once it would run off-screen */
+.marquee-track { display: flex; gap: 16px; width: max-content; padding: 0 4px; animation: marquee 46s linear infinite; }
+.marquee-track.reverse { animation-direction: reverse; }       /* second row runs the other way */
+.marquee-track:hover { animation-play-state: paused; }   /* pause only the hovered row */
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
 .card {
-  border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 24px;
+  width: 320px; flex: none; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 15px 18px;
+  display: flex; flex-direction: column; gap: 9px;
   transition: transform .16s, border-color .16s, background .16s;
 }
-.card:hover { transform: translateY(-3px); border-color: var(--line-2); background: var(--surface-2); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card:hover { transform: translateY(-3px); border-color: var(--accent); background: var(--surface-2); }
+.card-head { display: flex; align-items: center; gap: 11px; }
 .card-ico {
-  width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; font-size: 19px;
-  background: rgba(124, 92, 255, 0.12); border: 1px solid rgba(124, 92, 255, 0.25); margin-bottom: 16px;
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 16px; flex: none;
+  background: rgba(124, 92, 255, 0.12); border: 1px solid rgba(124, 92, 255, 0.25); color: var(--accent-ink);
 }
-.card h3 { margin: 0 0 8px; font-size: 17.5px; }
-.card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.card-head h3 { margin: 0; font-size: 15px; font-weight: 600; transition: color .16s; }
+.card:hover .card-head h3 { color: var(--accent); }
+.card p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; flex: 1; }
+.card-tag { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.card-tag::before { content: "— "; }
+@media (prefers-reduced-motion: reduce) { .marquee-track { animation: none; } }
+
+/* ---- feature detail overlay — the backdrop IS the full glowing raster ---- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 26px; overflow: hidden;
+  opacity: 0; pointer-events: none; transition: opacity .28s ease;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(124, 92, 255, 0.10), transparent 58%),
+    rgba(8, 10, 15, 0.52);                              /* light darkening */
+  -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px);  /* light blur */
+}
+/* the grid stays fixed; only the coloured (masked) area beats out from the centre */
+@property --pulse { syntax: "<percentage>"; inherits: false; initial-value: 16%; }
+.modal-backdrop::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(rgba(149, 123, 255, 0.32) 1px, transparent 1px) 0 0 / 56px 56px,
+    linear-gradient(90deg, rgba(149, 123, 255, 0.32) 1px, transparent 1px) 0 0 / 56px 56px;
+  -webkit-mask-image: radial-gradient(circle at 50% 46%, #000 0%, #000 var(--pulse), transparent calc(var(--pulse) + 20%));
+          mask-image: radial-gradient(circle at 50% 46%, #000 0%, #000 var(--pulse), transparent calc(var(--pulse) + 20%));
+  will-change: --pulse, opacity;
+  animation: heart 2.6s ease-in-out infinite;
+}
+@keyframes heart {
+  0%, 100% { --pulse: 5%;  opacity: .22; }
+  12%      { --pulse: 17%; opacity: .5; }
+  24%      { --pulse: 11%; opacity: .34; }
+  36%      { --pulse: 22%; opacity: .6; }
+  54%      { --pulse: 5%;  opacity: .22; }
+}
+.modal-backdrop.open { opacity: 1; pointer-events: auto; }
+.modal-dialog {
+  position: relative; max-width: 540px; width: 100%;
+  background: linear-gradient(180deg, var(--surface), var(--bg-2));
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  box-shadow: var(--shadow), 0 0 80px -22px rgba(124, 92, 255, 0.6);
+  padding: 26px 28px 28px;
+  transform: translateY(14px) scale(.985); transition: transform .28s ease;
+}
+.modal-backdrop.open .modal-dialog { transform: none; }
+.modal-close {
+  position: absolute; top: 13px; right: 13px; width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center; cursor: pointer; font-size: 13px; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--line); transition: .15s;
+}
+.modal-close:hover { color: var(--text); border-color: var(--l5); }
+.modal-head { display: flex; align-items: center; gap: 13px; margin-bottom: 15px; }
+.modal-ico {
+  width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font-size: 22px; flex: none;
+  background: rgba(124, 92, 255, 0.14); border: 1px solid rgba(124, 92, 255, 0.3); color: var(--accent-ink);
+}
+.modal-title { margin: 0; font-size: 20px; }
+.modal-body { margin: 0 0 16px; color: var(--muted); font-size: 14.5px; line-height: 1.68; }
+.modal-body code { font-family: var(--mono); font-size: .88em; color: var(--accent-ink); }
+.modal-body b { color: var(--text); }
+.modal-tag { padding-top: 14px; border-top: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop, .modal-dialog { transition: none; }
+  .modal-backdrop::before { animation: none; --pulse: 30%; opacity: .6; }
+}
 
 /* ----------------------------------------------------------- architecture - */
 .arch-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: start; }
@@ -277,6 +418,64 @@ a { color: inherit; text-decoration: none; }
 .flow-step b { font-size: 14.5px; } .flow-step p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; }
 .flow-step code { font-family: var(--mono); font-size: 12.5px; color: var(--accent-ink); background: rgba(124,92,255,.1); padding: 1px 6px; border-radius: 5px; }
 
+/* ------------------------------------------------------------- examples --- */
+.demo-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+.demo-tab {
+  font-family: var(--mono); font-size: 13px; color: var(--muted); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 16px; transition: color .18s, border-color .18s, background .18s;
+}
+.demo-tab:hover { color: var(--text); border-color: var(--line-2); }
+.demo-tab.is-active { color: var(--text); border-color: var(--accent); background: rgba(124,92,255,.12); }
+
+/* one window per script; the code and the simulated output are two views inside it */
+.demo-block .code { min-width: 0; }
+/* display:flex would otherwise override the [hidden] attr — keep hidden hidden */
+.demo-block[hidden] { display: none; }
+.code-pane[hidden], .view-tab[hidden] { display: none; }
+
+/* in-window Code / Output view toggle, in the code bar */
+.code-views { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.view-tab {
+  font-family: var(--mono); font-size: 11px; color: var(--muted); cursor: pointer;
+  background: transparent; border: 0; border-radius: 6px; padding: 4px 11px; transition: color .15s, background .15s;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.is-active { color: var(--text); background: var(--elevated); }
+
+/* Run button sits after the view toggle */
+.demo-run {
+  margin-left: 10px; font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--bg); cursor: pointer;
+  background: var(--accent-3); border: 1px solid var(--accent-3); border-radius: 7px; padding: 4px 12px;
+  transition: filter .15s, opacity .15s;
+}
+.demo-run + .copy { margin-left: 8px; }
+.demo-run:hover { filter: brightness(1.08); }
+.demo-run.busy { opacity: .6; cursor: progress; }
+
+/* output view — a faux terminal sharing the code window's frame */
+.code-pane[data-pane="output"] { background: linear-gradient(180deg, #0b0e16, #080a11); animation: pane-in .2s ease both; }
+@keyframes pane-in { from { opacity: 0; } to { opacity: 1; } }
+.term-out {
+  margin: 0; padding: 18px 18px 20px; max-height: 420px; overflow: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65; color: #cdd6ea; white-space: pre-wrap; word-break: break-word;
+}
+.term-out code { color: var(--accent-ink); }
+.term-cmd { color: var(--accent-3); font-weight: 700; }
+.term-done { color: var(--accent-3); }
+.term-cursor { color: var(--accent-3); animation: term-blink 1s steps(1) infinite; }
+@keyframes term-blink { 50% { opacity: 0; } }
+/* cursor for the per-tab typed description in Quickstart */
+.type-cursor { color: var(--accent); font-weight: 400; animation: term-blink 1s steps(1) infinite; }
+
+.demo-note {
+  margin: 22px 0 0; padding: 14px 18px; border-left: 3px solid var(--accent);
+  background: rgba(124,92,255,.06); border-radius: 0 10px 10px 0;
+  color: var(--muted); font-size: 13.5px;
+}
+.demo-note code { font-family: var(--mono); font-size: 12.5px; color: var(--accent-ink); }
+.demo-note b { color: var(--text); }
+
 /* ---------------------------------------------------------------- i/o ----- */
 .io-fig { border: 1px solid var(--line); background: linear-gradient(180deg, var(--surface), var(--bg-2)); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
 .io-fig svg { width: 100%; height: auto; display: block; }
@@ -304,6 +503,20 @@ a { color: inherit; text-decoration: none; }
 .formula .f { font-size: 16px; color: var(--text); }
 .formula .f b { color: var(--accent-ink); }
 .formula .cap { color: var(--faint); font-size: 12.5px; margin-top: 8px; }
+
+/* real typeset math (native MathML) */
+.formula .f math {
+  font-family: math, "STIX Two Math", "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
+  font-size: 1.5em; color: var(--text);
+}
+.formula .f math mo { color: var(--accent-ink); }
+.formula .f math mn { color: var(--accent-2); }
+
+.formula-grid { margin-top: 30px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.formula-grid .formula { margin-top: 0; padding: 16px 18px; display: flex; flex-direction: column; justify-content: center; }
+.formula-grid .formula .f math { font-size: 1.25em; }
+.formula.hero { margin-top: 14px; }
+@media (max-width: 760px) { .formula-grid { grid-template-columns: 1fr; } }
 
 /* ----------------------------------------------------------------- cta ---- */
 .cta-box {

@@ -1,17 +1,31 @@
 <header class="nav" data-nav>
   <div class="nav-inner">
     <a class="brand" href="#top">
-      <span class="brand-mark">◆</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="30" height="30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="bm-g" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#7c5cff"/>
+              <stop offset="0.55" stop-color="#22d3ee"/>
+              <stop offset="1" stop-color="#34d399"/>
+            </linearGradient>
+          </defs>
+          <rect x="3" y="3" width="42" height="42" rx="11" stroke="url(#bm-g)" stroke-width="3"/>
+          <line x1="3" y1="24" x2="45" y2="24" stroke="url(#bm-g)" stroke-width="3"/>
+          <polygon points="24,9 37,24 24,39 11,24" fill="url(#bm-g)"/>
+          <polygon points="24,16 31,24 24,32 17,24" fill="#0a0c11"/>
+        </svg>
+      </span>
       <span>Nexus Memory<br><small>cognitive memory · local-first</small></span>
     </a>
 
     <nav class="nav-links" data-nav-links>
+      <a href="#install">Quickstart</a>
       <a href="#features">Features</a>
       <a href="#architecture">Architecture</a>
       <a href="#showcase">Diary</a>
       <a href="#io">I/O</a>
       <a href="#tech">How it works</a>
-      <a href="#install">Quickstart</a>
       <a href="#faq">FAQ</a>
       <a href="docs.html">Docs</a>
     </nav>

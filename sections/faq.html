@@ -9,17 +9,17 @@
     <div class="faq-list">
       <details class="faq-item" data-reveal open>
         <summary>What is Nexus Memory?<span class="q-ico"></span></summary>
-        <div class="a">A <b>local-first cognitive memory</b> for LLM agents. Instead of a flat chat log, it gives your agent working, episodic, semantic and procedural memory behind a single <code>process()</code> call — so it actually remembers facts, events and your standing preferences across sessions. It runs as one local <code>.db</code> file, offline and provider-agnostic. See <a href="#features">Features</a>, the <a href="#architecture">Architecture</a>, or read the <a href="docs.html#overview">Overview in the docs</a>.</div>
+        <div class="a">A <b>local-first cognitive memory</b> for LLM agents. Instead of a flat chat log, it gives your agent working, episodic, semantic and procedural memory behind a single <code>process()</code> call — so it actually remembers facts, events and your standing preferences across sessions. It runs as one local <code>.db</code> file, offline and provider-agnostic. See <a href="#features">Features</a>, the <a href="#architecture">Architecture</a>, or read the <a href="docs.html#index">Overview in the docs</a>.</div>
       </details>
 
       <details class="faq-item" data-reveal>
         <summary>How do I install it?<span class="q-ico"></span></summary>
-        <div class="a">Two steps: create a project-local virtualenv and do an editable install — <code>python -m venv .venv</code>, then <code>pip install -e .</code>. There's no API key or model download for the default offline path. The full copy-paste snippet (plus the offline self-test) is in the <a href="#install">Quickstart</a>, and a deeper walkthrough lives in the <a href="docs.html#overview">docs</a>.</div>
+        <div class="a">Two steps: create a project-local virtualenv and do an editable install — <code>python -m venv .venv</code>, then <code>pip install -e .</code>. There's no API key or model download for the default offline path. The full copy-paste snippet (plus the offline self-test) is in the <a href="#install">Quickstart</a>, and a deeper walkthrough lives in the <a href="docs.html#usage/getting-started">docs</a>.</div>
       </details>
 
       <details class="faq-item" data-reveal>
         <summary>How do I use it once it's installed?<span class="q-ico"></span></summary>
-        <div class="a">Everything goes through one entry point: <code>process()</code>. You <b>ingest</b> an interaction to store it and <b>assemble</b> a context (plus standing <b>directives</b>) to read it back — then inject those into your system prompt. The <a href="#install">Quickstart</a> shows a working example; the <a href="#io">I/O map</a> and <a href="docs.html#io">I/O docs</a> list every action and its inputs and outputs.</div>
+        <div class="a">Everything goes through one entry point: <code>process()</code>. You <b>ingest</b> an interaction to store it and <b>assemble</b> a context (plus standing <b>directives</b>) to read it back — then inject those into your system prompt. The <a href="#install">Quickstart</a> shows a working example; the <a href="#io">I/O map</a> and <a href="docs.html#io/request-response">I/O docs</a> list every action and its inputs and outputs.</div>
       </details>
 
       <details class="faq-item" data-reveal>

@@ -2,58 +2,137 @@
   <div class="container">
     <div class="section-head" data-reveal>
       <p class="eyebrow">Quickstart</p>
-      <h2 class="h2">Two files and you're remembering.</h2>
-      <p class="lead">Install into a project-local virtualenv, then talk to memory through <code>process()</code> — or wire the standing behavior straight into your system prompt.</p>
+      <h2 class="h2">One command and you're remembering.</h2>
+      <p class="lead">Clone and <code>pip install</code> — that's the whole setup. A virtualenv is optional. Then talk to memory through the single <code>process()</code> entry point, from Python or any other language.</p>
     </div>
 
-    <div class="showcase-grid">
-      <div class="code" data-reveal>
-        <div class="code-bar">
-          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-          <span class="file">install.sh</span>
-          <button class="copy" data-copy>copy</button>
-        </div>
-        <pre><code><span class="tok-c"># a project-local venv, editable install</span>
-python -m venv .venv
-./.venv/Scripts/python.exe -m pip install -e .
-
-<span class="tok-c"># run the offline self-test — no API key needed</span>
-./.venv/Scripts/python.exe -m pytest -q
-<span class="tok-c"># 151 passed ✓</span></code></pre>
+    <!-- install options, selectable via tabs -->
+    <div class="tabset" data-reveal>
+      <div class="demo-tabs" role="tablist">
+        <button class="demo-tab is-active" data-tab="pip" role="tab">pip</button>
+        <button class="demo-tab" data-tab="venv" role="tab">venv (optional)</button>
+        <button class="demo-tab" data-tab="extras" role="tab">extras</button>
       </div>
 
-      <div class="code" data-reveal>
+      <div class="code" data-tabpane="pip">
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">terminal</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># clone + install — pip pulls the 3 deps and registers the package</span>
+git clone https://github.com/Sakushi-Dev/nexus_memory.git &amp;&amp; cd nexus_memory &amp;&amp; pip install -e .
+
+<span class="tok-c"># import nexus_memory now works anywhere (Python ≥ 3.11)</span></code></pre>
+      </div>
+
+      <div class="code" data-tabpane="venv" hidden>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">terminal</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># optional: isolate Nexus + its deps in a project-local venv</span>
+python -m venv .venv &amp;&amp; source .venv/bin/activate   <span class="tok-c"># Windows: .venv\Scripts\Activate.ps1</span>
+git clone https://github.com/Sakushi-Dev/nexus_memory.git &amp;&amp; cd nexus_memory &amp;&amp; pip install -e .</code></pre>
+      </div>
+
+      <div class="code" data-tabpane="extras" hidden>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">terminal</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># the defaults need nothing extra. opt into a richer embedder:</span>
+pip install -e <span class="tok-s">".[sentence-transformers]"</span>   <span class="tok-c"># local transformer embeddings</span>
+pip install -e <span class="tok-s">".[openai]"</span>                  <span class="tok-c"># hosted embeddings</span>
+
+pip install -e <span class="tok-s">".[dev]"</span> &amp;&amp; python -m pytest -q   <span class="tok-c"># run the offline tests · 159 passed ✓</span></code></pre>
+      </div>
+    </div>
+
+    <!-- usage examples, selectable via tabs -->
+    <div style="margin-top:54px" data-reveal>
+      <p class="eyebrow">Talk to it</p>
+      <h2 class="h2" style="font-size:clamp(22px,2.6vw,30px)">Plain JSON in, plain JSON out.</h2>
+      <p class="lead" id="talk-desc" style="margin-bottom:26px; min-height:3.4em">Ingest an instruction once; it returns as a directive on every assemble and persists across sessions.</p>
+    </div>
+
+    <div class="tabset" data-reveal data-desc-target="#talk-desc">
+      <div class="demo-tabs" role="tablist">
+        <button class="demo-tab is-active" data-tab="behavior" role="tab" data-desc="Ingest an instruction once; it returns as a directive on every assemble and persists across sessions.">behavior.py</button>
+        <button class="demo-tab" data-tab="bridge" role="tab" data-desc="Every request and response is plain JSON through one process() — a ten-line Python bridge turns Nexus into a service any process can pipe into.">bridge.py</button>
+        <button class="demo-tab" data-tab="client" role="tab" data-desc="Drive that bridge from any language over stdin/stdout; here Node.js sends a query and reads the prompt-ready context straight back as JSON.">client.js</button>
+      </div>
+
+      <!-- behavior: a standing directive, persisted -->
+      <div class="code" data-tabpane="behavior">
         <div class="code-bar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           <span class="file">behavior.py</span>
           <button class="copy" data-copy>copy</button>
         </div>
-        <pre><code><span class="tok-c"># a standing request is detected and persisted…</span>
+        <pre><code><span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
+m = <span class="tok-f">NexusMemory</span>()
+
+<span class="tok-c"># a standing instruction is detected + persisted automatically</span>
 m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {
-    <span class="tok-s">"query"</span>:    <span class="tok-s">"Sprich ab jetzt deutsch mit mir."</span>,
-    <span class="tok-s">"response"</span>: <span class="tok-s">"Alles klar."</span>,
+    <span class="tok-s">"query"</span>:    <span class="tok-s">"Always respond in German."</span>,
+    <span class="tok-s">"response"</span>: <span class="tok-s">"Got it."</span>,
 }})
 m.<span class="tok-f">wait</span>()
 
-res = m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"hi"</span>})
-<span class="tok-k">assert</span> <span class="tok-s">"Respond in German."</span> <span class="tok-k">in</span> res[<span class="tok-s">"directives"</span>]
-<span class="tok-c"># …inject directives into the system prompt — behavior persists.</span></code></pre>
+<span class="tok-c"># it returns as a directive on every assemble — inject it</span>
+<span class="tok-c"># into your system prompt and the behavior persists.</span>
+ctx = m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"hi"</span>})
+<span class="tok-f">print</span>(ctx[<span class="tok-s">"directives"</span>])      <span class="tok-c"># ['Respond in German.']</span></code></pre>
+      </div>
+
+      <!-- bridge: tiny JSON stdin/stdout shim -->
+      <div class="code" data-tabpane="bridge" hidden>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">bridge.py</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># a ten-line bridge: one JSON request per line in → one JSON response out</span>
+<span class="tok-k">import</span> sys, json
+<span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
+
+m = <span class="tok-f">NexusMemory</span>(db_path=<span class="tok-s">"agent.db"</span>)
+<span class="tok-k">for</span> line <span class="tok-k">in</span> sys.stdin:
+    <span class="tok-f">print</span>(json.<span class="tok-f">dumps</span>(m.<span class="tok-f">process</span>(json.<span class="tok-f">loads</span>(line))), flush=<span class="tok-k">True</span>)</code></pre>
+      </div>
+
+      <!-- client: any language drives the bridge -->
+      <div class="code" data-tabpane="client" hidden>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">client.js — Node.js</span>
+          <button class="copy" data-copy>copy</button>
+        </div>
+        <pre><code><span class="tok-c">// any language can drive it — here Node over stdin/stdout</span>
+<span class="tok-k">import</span> { spawn } <span class="tok-k">from</span> <span class="tok-s">"node:child_process"</span>;
+<span class="tok-k">const</span> py = <span class="tok-f">spawn</span>(<span class="tok-s">"python"</span>, [<span class="tok-s">"bridge.py"</span>]);
+
+py.stdout.<span class="tok-f">on</span>(<span class="tok-s">"data"</span>, b =&gt; <span class="tok-f">console</span>.log(<span class="tok-f">JSON</span>.parse(b).context_xml));
+py.stdin.<span class="tok-f">write</span>(<span class="tok-f">JSON</span>.stringify({ action: <span class="tok-s">"assemble"</span>, query: <span class="tok-s">"where are my keys?"</span> }) + <span class="tok-s">"\n"</span>);</code></pre>
       </div>
     </div>
 
-    <div style="margin-top:34px" data-reveal>
-      <p class="eyebrow" style="margin-bottom:12px">process() actions</p>
-      <div class="badges">
-        <span class="badge"><b>assemble</b></span>
-        <span class="badge"><b>ingest</b></span>
-        <span class="badge"><b>inspect</b></span>
-        <span class="badge"><b>forget</b></span>
-        <span class="badge"><b>optimize</b></span>
-        <span class="badge"><b>diary</b></span>
-        <span class="badge"><b>rule</b></span>
-        <span class="badge"><b>distill</b></span>
-        <span class="badge"><b>pending_summaries</b></span>
-        <span class="badge"><b>submit_summary</b></span>
+    <div style="margin-top:48px" data-reveal>
+      <p class="eyebrow" style="margin-bottom:16px">process() actions — one verb per call</p>
+      <div class="actions-grid">
+        <div class="action"><code>assemble</code><span>Build a <code>&lt;memory_context&gt;</code> for a query.</span></div>
+        <div class="action"><code>ingest</code><span>Store one exchange; fans out across layers.</span></div>
+        <div class="action"><code>inspect</code><span>Read store health or any layer.</span></div>
+        <div class="action"><code>forget</code><span>Delete by id or free-text match.</span></div>
+        <div class="action"><code>optimize</code><span>Compact — <code>VACUUM</code> + WAL checkpoint.</span></div>
+        <div class="action"><code>diary</code><span>Day-summary or transcript reconstruction.</span></div>
+        <div class="action"><code>rule</code><span>Add / list / deactivate directives.</span></div>
+        <div class="action"><code>distill</code><span>Promote hot facts into rules.</span></div>
+        <div class="action"><code>pending_summaries</code><span class="lv-line">Drain the diary outbox.<em class="lv">V</em></span></div>
+        <div class="action"><code>submit_summary</code><span class="lv-line">Fold a summary back in.<em class="lv">V</em></span></div>
       </div>
     </div>
   </div>

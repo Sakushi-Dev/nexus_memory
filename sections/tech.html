@@ -10,7 +10,7 @@
       <div class="stat"><div class="big">768</div><div class="lbl">dim vectors (vec0)</div></div>
       <div class="stat"><div class="big">~3<span style="font-size:18px">ms</span></div><div class="lbl">assemble latency (local)</div></div>
       <div class="stat"><div class="big">5</div><div class="lbl">cognitive layers</div></div>
-      <div class="stat"><div class="big">151</div><div class="lbl">tests passing</div></div>
+      <div class="stat"><div class="big">159</div><div class="lbl">tests passing</div></div>
     </div>
 
     <div class="tech-list" data-reveal>
@@ -24,9 +24,71 @@
       <div class="tech-item"><span class="ic">◆</span><div><b>Privacy &amp; security</b> <span>— opt-in regex PII masking; an off-path SQLCipher encryption hook.</span></div></div>
     </div>
 
-    <div class="formula" data-reveal>
-      <div class="f">FinalScore = <b>similarity</b> × <b>importance</b> × <b>exp(</b>−λ · days_passed<b>)</b></div>
-      <div class="cap">multi-signal ranking — relevance, salience, and recency decay (λ = 0.01 / day) in one number</div>
+    <div class="formula-grid" data-reveal>
+      <div class="formula">
+        <div class="f">
+          <math display="block" xmlns="http://www.w3.org/1998/Math/MathML">
+            <mi>cos</mi><mo>(</mo><mi mathvariant="bold">q</mi><mo>,</mo><mi mathvariant="bold">d</mi><mo>)</mo>
+            <mo>=</mo>
+            <mfrac>
+              <mrow><mi mathvariant="bold">q</mi><mo>·</mo><mi mathvariant="bold">d</mi></mrow>
+              <mrow><mo>&#x2225;</mo><mi mathvariant="bold">q</mi><mo>&#x2225;</mo><mo>&#x2225;</mo><mi mathvariant="bold">d</mi><mo>&#x2225;</mo></mrow>
+            </mfrac>
+            <mo>=</mo>
+            <mi mathvariant="bold">q</mi><mo>·</mo><mi mathvariant="bold">d</mi>
+          </math>
+        </div>
+        <div class="cap">vectors are L2-normalized, so cosine collapses to a single dot product</div>
+      </div>
+      <div class="formula">
+        <div class="f">
+          <math display="block" xmlns="http://www.w3.org/1998/Math/MathML">
+            <mover><mi mathvariant="bold">v</mi><mo>^</mo></mover>
+            <mo>=</mo>
+            <mfrac>
+              <mi mathvariant="bold">v</mi>
+              <msub><mrow><mo>&#x2225;</mo><mi mathvariant="bold">v</mi><mo>&#x2225;</mo></mrow><mn>2</mn></msub>
+            </mfrac>
+            <mo>,</mo>
+            <msub><mrow><mo>&#x2225;</mo><mover><mi mathvariant="bold">v</mi><mo>^</mo></mover><mo>&#x2225;</mo></mrow><mn>2</mn></msub>
+            <mo>=</mo><mn>1</mn>
+          </math>
+        </div>
+        <div class="cap">every embedder returns a unit-length vector (768-dim on the default path)</div>
+      </div>
+      <div class="formula">
+        <div class="f">
+          <math display="block" xmlns="http://www.w3.org/1998/Math/MathML">
+            <mi>similarity</mi><mo>=</mo><mi>clamp</mi><mo>(</mo>
+            <mn>1</mn><mo>&#x2212;</mo><msub><mi>cos</mi><mtext>dist</mtext></msub>
+            <mo>,</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo>)</mo>
+          </math>
+        </div>
+        <div class="cap">vec0 KNN returns a cosine distance; the clamp guards float drift</div>
+      </div>
+      <div class="formula">
+        <div class="f">
+          <math display="block" xmlns="http://www.w3.org/1998/Math/MathML">
+            <mtext>write</mtext><mo>&#x21D4;</mo>
+            <munder><mi>max</mi><mi>i</mi></munder>
+            <mi>cos</mi><mo>(</mo><mi mathvariant="bold">v</mi><mo>,</mo><msub><mi mathvariant="bold">m</mi><mi>i</mi></msub><mo>)</mo>
+            <mo>&lt;</mo><mi>&#x3C4;</mi><mo>,</mo>
+            <mi>&#x3C4;</mi><mo>=</mo><mn>0.90</mn>
+          </math>
+        </div>
+        <div class="cap">a 1-NN redundancy gate drops near-duplicate facts before they are stored</div>
+      </div>
+    </div>
+
+    <div class="formula hero" data-reveal>
+      <div class="f">
+        <math display="block" xmlns="http://www.w3.org/1998/Math/MathML">
+          <mi>FinalScore</mi><mo>=</mo>
+          <mi>similarity</mi><mo>×</mo><mi>importance</mi><mo>×</mo>
+          <msup><mi>e</mi><mrow><mo>&#x2212;</mo><mi>&#x3BB;</mi><mo>·</mo><mtext>days</mtext></mrow></msup>
+        </math>
+      </div>
+      <div class="cap">multi-signal ranking — relevance, salience, and recency decay (λ = 0.01 / day ⇒ half-life ≈ ln 2 ∕ λ ≈ 69 days) in one number</div>
     </div>
   </div>
 </section>
