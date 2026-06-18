@@ -351,7 +351,9 @@ verbatim, then composes the per-layer sections into one `<memory_context>`:
 The **recent-dialogue source** is `episodic.recent_turns(n)` when
 `config.episodic_enabled`, otherwise the volatile `working.recent(n)` buffer —
 callers always get *some* recency (`n = config.episodic_recent_turns`, default
-**6**). `assemble` returns a superset response:
+**6**). The same source selection backs the unified
+[`history(...)`](../usage/api-reference.md#convenience-wrapper-methods)
+accessor (see below). `assemble` returns a superset response:
 
 ```python
 {
@@ -364,6 +366,24 @@ callers always get *some* recency (`n = config.episodic_recent_turns`, default
   "latency_ms": 1.23,
 }
 ```
+
+### Unified history over Working / Episodic
+
+Beyond the `<recent_dialogue>` block that `assemble` nests, the orchestrator
+exposes a single **history accessor** —
+[`NexusMemory.history(...)`](../usage/api-reference.md#convenience-wrapper-methods)
+— that reads straight from these two layers and returns a native LLM message
+history (`[{role, content}]`, `[{role, content, timestamp}]`, or a rendered
+string). It reuses the **same source selection** as `assemble`'s recent-dialogue:
+the **durable** [`EpisodicStore.recent_turns`](../../src/nexus_memory/layers/episodic/episodic.py)
+(Layer II) when `config.episodic_enabled`, falling back to the volatile
+[`WorkingMemory.recent`](../../src/nexus_memory/layers/working/working.py)
+(Layer I) otherwise. Because the default source is Layer II, the history is
+**durable across restarts** — a fresh `NexusMemory` on the same `db_path`
+returns the same turns. It adds role filtering and turns-or-tokens truncation on
+top; see the [API reference](../usage/api-reference.md#convenience-wrapper-methods)
+for the full parameter contract. No new tables are involved — `history()` is a
+read-only view over storage the two layers already own.
 
 ---
 

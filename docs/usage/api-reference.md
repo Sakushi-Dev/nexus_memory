@@ -467,6 +467,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 | `diary(day=None, store=False)` | summary dict | Episodic day summary (`day=None` → latest day with turns). |
 | `working_snapshot()` | `list[dict]` | Volatile Layer I buffer `[{role, content, timestamp}, ...]` (`[]` if unwired). |
 | `reconstruct(time_range=None)` | `str` | Human-readable episodic transcript. |
+| `history(*, role=None, max_turns=None, max_tokens=None, token_counter=None, as_format="messages", template="{role}: {content}")` | `list[dict]` **or** `str` | Native LLM message history over the durable episodic layer (working buffer fallback). Three formats, two truncation modes, optional role filter. See [history()](#history--native-message-history) below. |
 | `distill()` | `{"status": "success", "promoted": [...]}` | Promote facts → rules. |
 | `pending_summaries(limit=None)` | `list[dict]` **or** error dict | Diary outbox jobs (handoff shape above). Error dict when the diary is off. |
 | `submit_summary(job_id, summary)` | `{"status", "applied"}` or error dict | Apply a model summary. Error dict when the diary is off. |
@@ -481,6 +482,66 @@ actions for direct programmatic use, plus the lifecycle helpers.
 > returns `{"status": "success", "updated_id", "content"}` (or `not_found`);
 > `pin()` returns `{"status": "success", "id", "content", "importance"}` and tags
 > the row `metadata={"pinned": True}`. See [Transparency](transparency.md).
+
+---
+
+## `history()` — native message history
+
+A method-only convenience accessor on
+[`NexusMemory`](../../src/nexus_memory/core/orchestrator.py) (no `process()`
+action) that returns the conversation history ready to feed straight into a chat
+LLM. It reads the **durable episodic layer** (Layer II) — or, when
+`config.episodic_enabled` is `False`, the volatile working buffer (Layer I) —
+mirroring the same source selection as `assemble`'s `recent_dialogue`. Turns are
+always **chronological (newest-last)**.
+
+```python
+messages = memory.history(max_turns=20)          # [{"role": ..., "content": ...}, ...]
+response = your_llm.chat(messages + [user_msg])  # feed straight into a native call
+```
+
+**Parameters** (all keyword-only):
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `role` | `"user" \| "assistant" \| None` | `None` | Keep only turns with this role; `None` keeps both. Any other value raises `ValueError`. |
+| `max_turns` | `int \| None` | `None` | Explicit turn cap (turns mode). |
+| `max_tokens` | `int \| None` | `None` | Explicit token budget (tokens mode). **Takes precedence over `max_turns`** when both are given. |
+| `token_counter` | `(str) -> int \| None` | `None` | Counter used in tokens mode. Defaults to the `len(s) // 4` heuristic (matching `WorkingMemory.token_estimate`). |
+| `as_format` | `"messages" \| "turns" \| "string"` | `"messages"` | Output shape (below). Any other value raises `ValueError`. |
+| `template` | `str` | `"{role}: {content}"` | Per-turn format string, used only for `as_format="string"`. |
+
+**Return** — `list[dict]` for `"messages"`/`"turns"` (`[]` when empty), or `str`
+for `"string"` (`""` when empty):
+
+| `as_format` | Returns |
+|-------------|---------|
+| `"messages"` | `[{"role", "content"}, ...]` — drop-in chat history. |
+| `"turns"` | `[{"role", "content", "timestamp"}, ...]` — adds the UTC timestamp. |
+| `"string"` | a newline-joined transcript rendered via `template`, e.g. `"user: hi\nassistant: hello"`. |
+
+**Truncation modes** (explicit args win over config defaults):
+
+- **turns** — keep the last *N* turns. Used when `max_turns` is given, or when
+  neither arg is given and [`config.history_truncation`](../configuration/nexus-config.md)
+  is `"turns"` (default cap `config.history_max_turns`, **20**).
+- **tokens** — walk newest→oldest accumulating `token_counter(content)` and keep
+  the newest suffix that fits the budget, then restore chronological order. Used
+  when `max_tokens` is given, or when `config.history_truncation` is `"tokens"`
+  (default budget `config.history_token_budget`, **2000**).
+
+A non-positive budget (`max_turns <= 0` / `max_tokens <= 0`) yields an empty
+result.
+
+**Role filter** — pass `role="user"` or `role="assistant"` to keep only one
+side of the dialogue; the filter is applied before truncation.
+
+> **Durability.** With the default `config.episodic_enabled=True`, `history()` is
+> backed by the durable episodic store, so it **survives restart** — a fresh
+> `NexusMemory` on the same `db_path` returns the same turns. The working-buffer
+> fallback (episodic disabled) is in-session only. No new storage is introduced;
+> `history()` is a read-only view over what Layers II/I already own. See
+> [Memory Layers](../architecture/memory-layers.md#unified-history-over-working--episodic).
 
 ---
 
