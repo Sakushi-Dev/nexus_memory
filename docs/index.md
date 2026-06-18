@@ -128,19 +128,17 @@ Every payload carries an `action`, passed to `memory.process(...)`. Full schemas
 | `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[...]}` |
 | `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
 
-## Setup
+## Install
 
-There is **no install step** — the importable module is the self-contained [`src/nexus_memory/`](../src/nexus_memory) package. Requires Python ≥ 3.11.
+Clone the repo and install it with `pip` (editable, so source edits take effect immediately). Requires Python ≥ 3.11.
 
 ```sh
-# 1. Get the code.
 git clone https://github.com/Sakushi-Dev/nexus_memory.git
-
-# 2. Install the dependencies the module needs.
-pip install -r nexus_memory/src/requirements.txt
+cd nexus_memory
+pip install -e .
 ```
 
-Then **copy** the `src/nexus_memory/` folder into your project, or **add** the clone's `src/` directory to your `PYTHONPATH`. The optional embedder backends (`sentence-transformers`, `openai`) are listed, commented out, in [`src/requirements.txt`](../src/requirements.txt). See [Getting started](usage/getting-started.md) for the full setup, and [NexusConfig](configuration/nexus-config.md) to tune every default.
+This reads [`pyproject.toml`](../pyproject.toml), pulls in the dependencies (`sqlite-vec`, `pydantic`, `numpy`), and registers `nexus_memory` so `import nexus_memory` works from anywhere with that interpreter. The optional embedder backends are extras: `pip install -e ".[sentence-transformers]"` or `pip install -e ".[openai]"`. See [Getting started](usage/getting-started.md) for the full setup, and [NexusConfig](configuration/nexus-config.md) to tune every default.
 
 ## License
 

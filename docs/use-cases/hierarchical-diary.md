@@ -190,10 +190,10 @@ What happens, step by step:
 
 > Section folding and the `<diary>` / `<persistent_summary>` context injection only appear once you cross day boundaries (the example stays within a single UTC day). To exercise those paths deterministically, inject a `today` callable into `DiaryScheduler` as the test suite does — see the [Diary Layer architecture](../architecture/diary-layer.md).
 
-Run it with the project venv:
+Run it (once the package is installed):
 
 ```bash
-./.venv/Scripts/python.exe examples/diary_outbox.py
+python examples/diary_outbox.py
 ```
 
 ## Reading the pyramid back

@@ -97,7 +97,7 @@ memory = NexusMemory(
 - **Constructor:** `SentenceTransformerEmbedder(model_name="all-mpnet-base-v2", **kwargs)`. Extra `kwargs` are forwarded to the underlying `SentenceTransformer`.
 - **Dimension:** read from the loaded model via `get_sentence_embedding_dimension()` and exposed as `emb.dim` — do not hard-code it; pass it into `NexusConfig(dim=emb.dim)`.
 - **Normalization:** the model is invoked with `normalize_embeddings=True`, so vectors are already unit length.
-- **Install:** `pip install sentence-transformers` (or uncomment it in [`src/requirements.txt`](../../src/requirements.txt)). Missing → `ImportError` with that hint.
+- **Install:** `pip install -e ".[sentence-transformers]"` (or `pip install sentence-transformers`). Missing → `ImportError` with that hint.
 
 ### `OpenAIEmbedder`
 
@@ -115,7 +115,7 @@ memory = NexusMemory(db_path="agent.db", config=cfg, embedder=emb)
 - **Constructor:** `OpenAIEmbedder(model="text-embedding-3-small", dim=1536, **kwargs)`. Extra `kwargs` are forwarded to the OpenAI `OpenAI(...)` client (API key, base URL, etc.).
 - **Dimension:** defaults to `1536`, configurable via the `dim` argument; the same value is passed to the API as the `dimensions` parameter. Keep `config.dim` equal to it.
 - **Normalization:** the raw API embedding is L2-normalized by the adapter before it is returned.
-- **Install:** `pip install openai` (or uncomment it in [`src/requirements.txt`](../../src/requirements.txt)). Missing → `ImportError` with that hint.
+- **Install:** `pip install -e ".[openai]"` (or `pip install openai`). Missing → `ImportError` with that hint.
 
 ## PII guidance for external APIs
 

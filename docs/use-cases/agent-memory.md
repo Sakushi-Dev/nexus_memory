@@ -42,8 +42,8 @@ how the layers fit together.
 ## 2. The agent loop, end to end
 
 The complete lifecycle goes through the single `process()` entry point. This is
-[`examples/basic_usage.py`](../../examples/basic_usage.py), runnable offline with
-the project venv (`./.venv/Scripts/python.exe examples/basic_usage.py`):
+[`examples/basic_usage.py`](../../examples/basic_usage.py), runnable offline once
+the package is installed (`python examples/basic_usage.py`):
 
 ```python
 import tempfile

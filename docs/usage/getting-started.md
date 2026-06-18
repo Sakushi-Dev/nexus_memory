@@ -5,32 +5,57 @@ This page takes you from a clean checkout to a working, fully offline memory loo
 ## Requirements
 
 - **Python ≥ 3.11.**
-- Three runtime dependencies, pinned in [`src/requirements.txt`](../../src/requirements.txt): `sqlite-vec>=0.1.9`, `pydantic>=2.12`, and `numpy>=2.0`. No external services and no LLM are required on the default path.
+- Three runtime dependencies, declared in [`pyproject.toml`](../../pyproject.toml): `sqlite-vec>=0.1.9`, `pydantic>=2.12`, and `numpy>=2.0`. `pip` installs them automatically. No external services and no LLM are required on the default path.
 
-## Setup
+## Install
 
-There is **no install step** — the importable module is the self-contained `src/nexus_memory/` package. Clone the repository, install the dependencies, and make the package importable in your project:
+Clone the repository and install it with `pip`. The editable flag (`-e`) means edits to `src/nexus_memory/` take effect immediately, without reinstalling:
 
 ```sh
-# 1. Get the code.
 git clone https://github.com/Sakushi-Dev/nexus_memory.git
-
-# 2. Install the dependencies the module needs.
-pip install -r nexus_memory/src/requirements.txt
+cd nexus_memory
+pip install -e .
 ```
 
-Then make the package importable — either **copy** the `src/nexus_memory/` folder into your project, or **add** the clone's `src/` directory to your `PYTHONPATH`.
+This reads [`pyproject.toml`](../../pyproject.toml), pulls in the runtime dependencies, and registers the `nexus_memory` package so `import nexus_memory` works from anywhere with that interpreter.
+
+> **Multiple Pythons?** `pip` installs into the interpreter it belongs to. To target a specific one (e.g. the one your editor runs), call pip through it: `path/to/python.exe -m pip install -e .`
+
+### Install into a virtual environment (recommended)
+
+A virtual environment keeps Nexus and its dependencies isolated from your system Python. Create one inside the clone, activate it, then install — `pip` now resolves to the venv automatically:
+
+```sh
+git clone https://github.com/Sakushi-Dev/nexus_memory.git
+cd nexus_memory
+
+# Create the venv.
+python -m venv .venv
+
+# Activate it…
+source .venv/bin/activate        # Linux / macOS
+.venv\Scripts\Activate.ps1       # Windows (PowerShell)
+
+# …then install into it.
+pip install -e .
+```
+
+While the venv is active, `python` and `pip` point at it, so `python examples/basic_usage.py` and `python -m pytest -q` just work. Leave it again with `deactivate`.
 
 ### Optional embedder backends
 
-The defaults need none of these. The optional backends are listed, commented out, in [`src/requirements.txt`](../../src/requirements.txt) — uncomment the one you want (or `pip install` it directly):
+The defaults need none of these. The optional backends are declared as extras in [`pyproject.toml`](../../pyproject.toml) — install the one you want:
 
 | Backend | Install | Enables |
 |---------|---------|---------|
-| `sentence-transformers>=2.2` | `pip install sentence-transformers` | [`SentenceTransformerEmbedder`](embedders.md) (local transformer embeddings) |
-| `openai>=1.0` | `pip install openai` | [`OpenAIEmbedder`](embedders.md) (hosted embeddings) |
+| `sentence-transformers>=2.2` | `pip install -e ".[sentence-transformers]"` | [`SentenceTransformerEmbedder`](embedders.md) (local transformer embeddings) |
+| `openai>=1.0` | `pip install -e ".[openai]"` | [`OpenAIEmbedder`](embedders.md) (hosted embeddings) |
 
 Both embedder adapters are **lazy-imported** — the library never touches `sentence-transformers` or `openai` unless you explicitly construct one of those embedders. See [Embedders](embedders.md) for how to wire one up (and keep `config.dim` in sync).
+
+### Updating
+
+Because the install is editable, `git pull` is usually all you need. Re-run `pip install -e .` only if the dependencies changed (e.g. after a release bumps requirements in [`pyproject.toml`](../../pyproject.toml)).
 
 ### Verify it imports
 
@@ -38,11 +63,11 @@ Both embedder adapters are **lazy-imported** — the library never touches `sent
 python -c "from nexus_memory import NexusMemory; print('ok')"
 ```
 
-To run the test suite from a clone, install `pytest` (`pip install pytest`) and run `python -m pytest -q` from the repository root.
+To run the test suite from a clone, install the dev extra (`pip install -e ".[dev]"`) and run `python -m pytest -q` from the repository root.
 
 ## Quickstart: an end-to-end loop
 
-The snippet below mirrors [`examples/basic_usage.py`](../../examples/basic_usage.py). It writes to a throwaway database, ingests one user/assistant exchange, assembles a `<memory_context>` for a related query, inspects store health, and closes. Run it as-is with `./.venv/Scripts/python.exe examples/basic_usage.py`.
+The snippet below mirrors [`examples/basic_usage.py`](../../examples/basic_usage.py). It writes to a throwaway database, ingests one user/assistant exchange, assembles a `<memory_context>` for a related query, inspects store health, and closes. Run it as-is with `python examples/basic_usage.py`.
 
 ```python
 import tempfile

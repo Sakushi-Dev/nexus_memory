@@ -12,28 +12,49 @@ A **local-first**, dependency-light agent-memory library for Python. It gives an
 - **Privacy by design** — an opt-in regex [PII filter](src/nexus_memory/core/privacy.py) masks emails/phones/names *before* embedding (off by default on the local path; turn it on for external embedding APIs). An optional SQLCipher [encryption](src/nexus_memory/core/security.py) hook stays off the critical path.
 - **User-centric** — by default only the *user's* statements become semantic facts; assistant prose goes to the episodic diary, not the vector store.
 
-## Setup
+## Install
 
-There is **no install step**. The importable module is the self-contained [`src/nexus_memory/`](src/nexus_memory) package — add it to your project and `import nexus_memory` just works. Requires Python ≥ 3.11.
+Clone the repo and install it into your Python with `pip`. Requires Python ≥ 3.11.
 
 ```sh
 # 1. Get the code.
 git clone https://github.com/Sakushi-Dev/nexus_memory.git
+cd nexus_memory
 
-# 2. Install the dependencies the module needs.
-pip install -r nexus_memory/src/requirements.txt
+# 2. Install the package (editable, so source edits take effect immediately).
+pip install -e .
 ```
 
-Then make the package importable in your project — either:
-
-- **copy** the [`src/nexus_memory/`](src/nexus_memory) folder into your project tree, next to your own code; or
-- **add** the clone's `src/` directory to your `PYTHONPATH` and import it in place.
+This reads [`pyproject.toml`](pyproject.toml), pulls in the dependencies (`sqlite-vec`, `pydantic`, `numpy`), and registers the `src/nexus_memory/` package so `import nexus_memory` works from anywhere with that interpreter:
 
 ```python
-import nexus_memory  # works once src/nexus_memory/ is on the path
+import nexus_memory  # importable after `pip install -e .`
 ```
 
-The only requirement is that the module can reach its dependencies, pinned in [`src/requirements.txt`](src/requirements.txt). The optional embedder backends (`sentence-transformers`, `openai`) are listed there, commented out — uncomment what you need (see [Embedders](docs/usage/embedders.md)).
+> **Multiple Pythons?** `pip` installs into the interpreter it belongs to. To target a specific one (e.g. the one your editor runs), call pip through it: `path/to/python.exe -m pip install -e .`
+
+The optional embedder backends are extras — install what you need:
+
+```sh
+pip install -e ".[sentence-transformers]"   # local SentenceTransformer embedder
+pip install -e ".[openai]"                   # OpenAI embedder
+```
+
+See [Embedders](docs/usage/embedders.md) for details.
+
+### Updating
+
+Because the install is editable, pulling the latest code is usually all you need:
+
+```sh
+git pull
+```
+
+Re-run `pip install -e .` only if the dependencies changed (e.g. after a new release bumps requirements in [`pyproject.toml`](pyproject.toml)):
+
+```sh
+pip install -e .   # picks up new/updated dependencies
+```
 
 > **Driving it from another language?** Every request and response is a plain `dict` (or JSON string) through one `process()` entry point, so the module can sit behind a thin Python bridge (subprocess, stdin/stdout JSON, or a small socket/IPC shim) and be called from any language — no Python-specific objects cross the boundary.
 
@@ -104,7 +125,8 @@ Full documentation lives under [docs/](docs/) — start at [docs/index.md](docs/
 ## Run the tests
 
 ```sh
-./.venv/Scripts/python.exe -m pytest -q
+pip install -e ".[dev]"   # once, to get pytest
+python -m pytest -q
 ```
 
 ## License
