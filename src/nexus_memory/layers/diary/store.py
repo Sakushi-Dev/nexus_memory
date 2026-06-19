@@ -34,7 +34,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS diary_days (
     period            TEXT PRIMARY KEY,      -- 'YYYY-MM-DD' (UTC day, matches turn timestamps)
     summary           TEXT DEFAULT '',       -- latest narrative for the day
-    covered_through   INTEGER DEFAULT 0,     -- max episodic_turns.id already folded in
+    covered_through   INTEGER DEFAULT 0,     -- last-APPLIED high-water mark (max episodic_turns.id folded in); no longer gates the rolling window, only the empty-tick guard
     interaction_count INTEGER DEFAULT 0,     -- interactions seen this day
     finalized         INTEGER DEFAULT 0,     -- 1 once the day is closed (rollover/close)
     folded            INTEGER DEFAULT 0,     -- 1 once folded into a persistent section
@@ -128,7 +128,15 @@ class DiaryStore:
         return int(row["interaction_count"])
 
     def set_day_summary(self, period: str, summary: str, covered_through: int) -> None:
-        """Set the day's ``summary`` + ``covered_through`` (and ``updated_at``)."""
+        """Set the day's ``summary`` + ``covered_through`` (and ``updated_at``).
+
+        ``covered_through`` is a monotonic last-APPLIED high-water mark
+        (``advance_to = max(id in window)`` from the applied job). It no longer
+        gates the rolling daily window (the overlapping window does that); it is
+        kept so day finalization/folding still terminate and so the scheduler's
+        empty-tick guard can tell when nothing new was ingested since the last
+        apply.
+        """
         with self.db.lock:
             self.db.conn.execute(
                 "UPDATE diary_days SET summary = ?, covered_through = ?, updated_at = ? "

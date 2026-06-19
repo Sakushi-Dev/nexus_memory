@@ -18,7 +18,7 @@ SDK.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable
 
 from .prompts import DAILY_PROMPT, SECTION_PROMPT
@@ -29,6 +29,11 @@ if TYPE_CHECKING:  # avoid an import cycle at runtime
     from .store import DiaryStore
 
 logger = logging.getLogger(__name__)
+
+# Rows per turn: one ingested interaction = a user message AND the assistant
+# reply = 2 ``episodic_turns`` rows. ``DiaryConfig.diary_window`` counts turns;
+# the window read multiplies by this to get its row budget (no inlined ``*2``).
+ROWS_PER_TURN = 2
 
 
 def _default_today() -> str:
@@ -62,19 +67,62 @@ class DiaryScheduler:
     # ------------------------------------------------------------------ #
     # episodic read helper (direct, no EpisodicStore import)
     # ------------------------------------------------------------------ #
-    def _new_turns(self, day: str, after_id: int) -> list[dict]:
-        """Return the day's turns with ``id > after_id``, oldest-first.
+    def _recent_turns(self, day: str, covered_through: int) -> list[dict]:
+        """Return the day's rolling daily window, oldest-first (both roles).
 
         Reads ``episodic_turns`` directly via the shared connection, bounded to
-        the UTC day in the sortable ``YYYY-MM-DD HH:MM:SS`` text space.
+        the UTC day in the sortable ``YYYY-MM-DD HH:MM:SS`` text space using an
+        exclusive next-day upper bound (so the whole-second ``_utc_now_str``
+        format is load-bearing).
+
+        The window is rows whose ``id`` is in ``[lower, newest]`` for the day,
+        where::
+
+            lower = min(covered_through + 1,
+                        newest_id - diary_window * ROWS_PER_TURN + 1)
+
+        so it ALWAYS includes at least the last ``diary_window`` turns (overlap,
+        for reconciliation) AND never drops anything ingested since the last
+        applied drain (completeness). If the window's lower edge sits above
+        ``covered_through + 1`` (the host drained slower than ``diary_window``
+        turns) the older uncovered turns would be skipped — but the ``min(...)``
+        anchors the lower edge at ``covered_through + 1`` precisely to keep
+        completeness, so that case does not arise. After slicing, a single
+        leading ``role=='assistant'`` row is dropped (B7) to avoid an orphaned
+        assistant whose paired user row fell outside the window.
         """
+        upper = self._next_day(day)
+        newest_row = self.db.conn.execute(
+            "SELECT MAX(id) AS m FROM episodic_turns "
+            "WHERE timestamp >= ? AND timestamp < ?",
+            (f"{day} 00:00:00", upper),
+        ).fetchone()
+        newest = newest_row["m"] if newest_row is not None else None
+        if newest is None:
+            return []
+
+        window_floor = newest - self.config.diary_window * ROWS_PER_TURN + 1
+        lower = min(covered_through + 1, window_floor)
+
         rows = self.db.conn.execute(
             "SELECT id, role, content, timestamp FROM episodic_turns "
-            "WHERE id > ? AND timestamp >= ? AND timestamp <= ? "
+            "WHERE id >= ? AND id <= ? AND timestamp >= ? AND timestamp < ? "
             "ORDER BY id ASC",
-            (after_id, f"{day} 00:00:00", f"{day} 23:59:59"),
+            (lower, newest, f"{day} 00:00:00", upper),
         ).fetchall()
-        return [dict(r) for r in rows]
+        window = [dict(r) for r in rows]
+
+        # B7: drop a single leading orphaned assistant row (paired user row fell
+        # outside the window), so the window starts on a turn boundary.
+        if window and window[0]["role"] == "assistant":
+            window = window[1:]
+        return window
+
+    @staticmethod
+    def _next_day(day: str) -> str:
+        """Return the exclusive next-day upper bound ``YYYY-MM-DD 00:00:00``."""
+        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return (d + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
 
     # ------------------------------------------------------------------ #
     # §4.1 — on each ingested interaction
@@ -90,7 +138,7 @@ class DiaryScheduler:
                 row = self.store.get_day(last)
                 if row and not row["finalized"]:
                     self.store.finalize_day(last)
-                    self._enqueue_daily(last)
+                    self._enqueue_daily(last, force=True)
 
             # 2. Upsert today + count this interaction.
             self.store.upsert_day(day)
@@ -100,20 +148,35 @@ class DiaryScheduler:
             if count % self.config.update_every == 0:
                 self._enqueue_daily(day)
 
-    def _enqueue_daily(self, day: str) -> None:
-        """Enqueue a rolling daily job for ``day`` (if there are new turns)."""
+    def _enqueue_daily(self, day: str, *, force: bool = False) -> None:
+        """Enqueue a rolling daily job for ``day``.
+
+        Sends an overlapping window of the day's recent turns (both roles), not a
+        strict delta — see :meth:`_recent_turns`. ``covered_through`` no longer
+        gates the window; it is the last-applied high-water mark and the
+        idempotency signal for the empty-tick guard below.
+
+        Guard ordering (B2/B3): the day row must exist, the window must be
+        non-empty (avoid ``max([])``), then — unless ``force`` — skip when
+        nothing advanced since the last applied summary. ``finalize()`` and the
+        rollover branch pass ``force=True`` so a finalized-but-unfolded day is
+        never stranded by the empty-tick guard (B3).
+        """
         row = self.store.get_day(day)
-        covered = row["covered_through"]
-        new_turns = self._new_turns(day, covered)
-        if not new_turns:
+        if row is None:
             return
-        advance_to = max(t["id"] for t in new_turns)
+        window = self._recent_turns(day, row["covered_through"])
+        if not window:
+            return
+        advance_to = max(t["id"] for t in window)
+        if not force and advance_to == row["covered_through"]:
+            return  # empty-tick guard: nothing new ingested since the last apply
         self.store.enqueue_job(
             kind="daily",
             target=day,
-            prompt=DAILY_PROMPT,
+            prompt=DAILY_PROMPT.format(max_sentences=self.config.max_sentences),
             prior_summary=row["summary"] or "",
-            items=new_turns,
+            items=window,
             advance_to=advance_to,
         )
 
@@ -214,4 +277,4 @@ class DiaryScheduler:
             row = self.store.get_day(day)
             if row and not row["finalized"]:
                 self.store.finalize_day(day)
-            self._enqueue_daily(day)
+            self._enqueue_daily(day, force=True)
