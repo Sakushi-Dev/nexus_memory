@@ -468,6 +468,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 | `working_snapshot()` | `list[dict]` | Volatile Layer I buffer `[{role, content, timestamp}, ...]` (`[]` if unwired). |
 | `reconstruct(time_range=None)` | `str` | Human-readable episodic transcript. |
 | `history(*, role=None, max_turns=None, max_tokens=None, token_counter=None, as_format="messages", template="{role}: {content}")` | `list[dict]` **or** `str` | Native LLM message history over the durable episodic layer (working buffer fallback). Three formats, two truncation modes, optional role filter. See [history()](#history--native-message-history) below. |
+| `tokens(scope="full", *, messages=None, response=None, counter=None)` | `int` **or** `dict[str, int]` | Token accounting over the **actual round-trip** (`messages` array + `response`), split by section: `system` (the whole system message), `input` (user/assistant messages), `output` (the reply). `int` for one scope; `{scope: int}` + `"total"` for a list. See [tokens()](#tokens--token-accounting) below. |
 | `distill()` | `{"status": "success", "promoted": [...]}` | Promote facts → rules. |
 | `pending_summaries(limit=None)` | `list[dict]` **or** error dict | Diary outbox jobs (handoff shape above). Error dict when the diary is off. |
 | `submit_summary(job_id, summary)` | `{"status", "applied"}` or error dict | Apply a model summary. Error dict when the diary is off. |
@@ -542,6 +543,56 @@ side of the dialogue; the filter is applied before truncation.
 > fallback (episodic disabled) is in-session only. No new storage is introduced;
 > `history()` is a read-only view over what Layers II/I already own. See
 > [Memory Layers](../architecture/memory-layers.md#unified-history-over-working--episodic).
+
+---
+
+## `tokens()` — token accounting
+
+A method-only convenience accessor on
+[`NexusMemory`](../../src/nexus_memory/core/orchestrator.py) (no `process()`
+action) that counts tokens over the **actual LLM round-trip** — the request
+`messages` array plus the model's `response`, i.e. exactly what crosses the wire
+— and splits it by *section* (not storage layer). It bundles the previously
+scattered `len(s) // 4` heuristics (`xml_format.estimate_tokens`,
+`WorkingMemory.token_estimate`, the `history()` counter default) behind one API,
+and lets you swap in a real tokenizer.
+
+- **system** — the full system message(s): the host's base prompt **and**
+  everything Nexus injects into it (`directives` + `facts`). Because the recalled
+  facts/directives live inside the system message, they count here — not under
+  `input`. Nexus doesn't need to own the base prompt to count it: you hand it the
+  array you actually sent.
+- **input** — the rest of the prompt: every `user`/`assistant` message (the
+  conversation history plus the current user turn). Everything except `system`.
+- **output** — the model's `response` (the completion).
+
+```python
+messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": user_msg}]
+answer = your_llm.chat(messages)
+usage = memory.tokens(["system", "input", "output"], messages=messages, response=answer)
+# {"system": 52, "input": 35, "output": 8, "total": 95}
+```
+
+**Parameters:**
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `scope` | `str \| list[str]` | `"full"` | What to count (below). A list yields a per-scope breakdown. Unknown scopes raise `ValueError`. |
+| `messages` | `list[dict] \| None` | `None` | The request array you send the LLM (`[{role, content}]`). Used by `system`/`input`/`full`; treated as `[]` if omitted. |
+| `response` | `str \| None` | `None` | The model's reply text (the `output`); `""` if omitted. |
+| `counter` | `(str) -> int \| None` | `None` | How to count. Defaults to the shared `len(s) // 4` heuristic; pass a real tokenizer (e.g. `tiktoken`) for exact counts. |
+
+**Scopes:**
+
+| scope | counts |
+|-------|--------|
+| `system` | all `role == "system"` message content |
+| `input` | all `role in ("user", "assistant")` message content |
+| `output` | the `response` text (the model's completion) |
+| `full` | `system` + `input` + `output` (**default**) |
+
+**Return** — `int` for a single scope; for a list, a `{scope: int}` dict with an
+extra `"total"` key (the sum of the listed scopes).
 
 ---
 
