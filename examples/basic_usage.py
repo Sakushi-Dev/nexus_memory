@@ -1,32 +1,18 @@
-"""Basic end-to-end usage — building a NATIVE LLM request with Nexus.
+"""Minimal end-to-end usage — Nexus as the central memory of an LLM chat.
 
-Wired for the **OpenAI Chat Completions** API (``chat.completions.create``):
-everything lives in a single ``messages`` array, with the system prompt as the
-first ``{"role": "system", ...}`` entry — OpenAI has no separate ``system``
-parameter.
+The smallest real loop, per user turn:
+
+  1. RECALL  — ``assemble`` returns the standing directives + recalled facts
+               for this query (Layers III/IV).
+  2. BUILD   — compose ONE OpenAI ``messages`` array: a ``system`` message
+               (base prompt + that recalled memory) first, then the durable
+               conversation from ``memory.history()``, then the user turn.
+  3. ANSWER  — your model replies (here a canned offline stub).
+  4. WRITE   — ``ingest`` the exchange so the next turn remembers it.
 
 Runs fully offline with the default ``HashingEmbedder`` (no network, no model
-download). It shows the recommended split when Nexus is your central memory:
-
-* **system message**  <- standard prompt + the standing directives and recalled
-  facts from ``assemble`` (Layers III/IV — what the model should *know/obey*),
-  prepended as the first message;
-* **chat messages**   <- the durable conversation from ``memory.history()`` as a
-  native ``[{role, content}]`` array (Layer II/I — the actual turn-by-turn chat),
-  plus the current user message.
-
-That avoids duplicating the dialogue (we do NOT also inject ``<recent_dialogue>``),
-keeps roles native (the model sees its own prior ``assistant`` turns), and lets
-Nexus own the history — ``history()`` reads the durable episodic store, so it
-survives a restart.
-
-After each turn we also print ``memory.tokens(...)`` — token accounting over the
-**actual round-trip**, by section: ``system`` = the whole system message (base
-prompt + Nexus's injected directives/facts), ``input`` = the rest of the prompt
-(history + this user turn), ``output`` = the model's reply. We pass the real
-``messages`` array and ``response`` so it counts exactly what crossed the wire.
-
-Nexus never calls an LLM itself, so the "assistant" here is a canned stub.
+download). The demo DB is removed on exit. For token accounting see
+``token_accounting.py``.
 
 Run it::
 
@@ -34,37 +20,29 @@ Run it::
 """
 
 from pathlib import Path
-from pprint import pprint
 
 from nexus_memory import NexusMemory
 
-# Where this demo keeps its one local SQLite file. Removed on exit so every run
-# starts from an empty store (otherwise history() would accumulate across runs).
 DB_PATH = Path("nexus_memory.db")
 
 # The plain, memory-less base prompt + a short framing for the injected memory.
 SYSTEM_PROMPT = "You are a helpful personal assistant."
 MEMORY_PREAMBLE = (
     "Use the standing directives and known facts below as trusted background.\n"
-    "Apply them naturally; do not mention them. The conversation itself follows\n"
-    "as normal chat messages."
+    "Apply them naturally; do not mention them."
 )
 
 # The simulated USER side: state a fact, set standing behavior, then ask again
 # in different words to prove the fact is recalled by meaning.
 USER_TURNS = [
-    "I keep my house keys in the blue ceramic bowl on the counter.",
-    "Always answer in English and keep answers concise.",
-    "remind me where my house keys are",
+    "My dog Mochi is a corgi and she loves the park.",
+    "Always be concise.",
+    "what breed is Mochi?",
 ]
 
 
 def build_system(recall: dict) -> str:
-    """Compose the system prompt from the standard prompt + Nexus's directives/facts.
-
-    Directives (Layer IV) and recalled facts (Layer III) are *knowledge/behavior*,
-    so they belong in the ``system`` message — not in the chat transcript.
-    """
+    """Compose the system message: base prompt + Nexus's directives + facts."""
     parts = [SYSTEM_PROMPT, MEMORY_PREAMBLE]
     if recall["directives"]:
         parts.append("Standing directives:\n" + "\n".join(f"- {d}" for d in recall["directives"]))
@@ -79,78 +57,52 @@ def simulated_assistant(messages: list[dict]) -> str:
         client.chat.completions.create(model=..., messages=messages)
 
     The ``messages`` array already carries the system prompt as its first entry.
-    Here we return canned, deterministic replies so the demo stays offline.
     """
-    last_user = messages[-1]["content"]
     canned = {
-        "I keep my house keys in the blue ceramic bowl on the counter.":
-            "Good to know - I'll remember that.",
-        "Always answer in English and keep answers concise.":
+        "My dog Mochi is a corgi and she loves the park.":
+            "Got it - Mochi the corgi.",
+        "Always be concise.":
             "Understood.",
-        "remind me where my house keys are":
-            "They're in the blue ceramic bowl on the counter.",
+        "what breed is Mochi?":
+            "Mochi is a corgi.",
     }
-    return canned.get(last_user, "Okay.")
+    return canned.get(messages[-1]["content"], "Okay.")
+
+
+def run_turn(memory: NexusMemory, user_msg: str) -> str:
+    # 1. RECALL — directives + facts for THIS query (-> system message).
+    recall = memory.process({"action": "assemble", "query": user_msg})
+
+    # 2. BUILD — one OpenAI messages array: system first, then the durable
+    #    history(), then the current user turn.
+    messages = [{"role": "system", "content": build_system(recall)}]
+    messages += memory.history(as_format="messages")
+    messages.append({"role": "user", "content": user_msg})
+
+    # 3. ANSWER — your model replies from the messages array.
+    answer = simulated_assistant(messages)
+
+    # 4. WRITE — persist the exchange so the next turn's history() has it.
+    memory.process({"action": "ingest", "interaction": {"query": user_msg, "response": answer}})
+    memory.wait()  # ingest is async; wait so the next history() sees this turn
+
+    # What Nexus surfaced for this query (grows turn by turn).
+    recalled = recall["directives"] + [f["content"] for f in recall["raw_facts"]]
+    return (
+        f"user:      {user_msg}\n"
+        f"recalled:  {', '.join(recalled) if recalled else '(nothing yet)'}\n"
+        f"assistant: {answer}"
+    )
 
 
 def main() -> None:
     memory = NexusMemory(db_path=str(DB_PATH))  # one local .db file, offline embedder
     try:
+        # Each turn returns its text; main() prints it.
         for turn, user_msg in enumerate(USER_TURNS, start=1):
-            print(f"\n########## TURN {turn} -- user: {user_msg!r} ##########")
-
-            # 1. RECALL — directives + facts for THIS query (-> system message).
-            recall = memory.process({"action": "assemble", "query": user_msg})
-            system = build_system(recall)
-
-            # 2. NATIVE HISTORY — OpenAI style: one messages array. The system
-            #    prompt is the FIRST entry (OpenAI has no separate `system` arg),
-            #    then the durable conversation from memory.history(), then the
-            #    current user turn. memory.history() IS the native source here.
-            messages = [{"role": "system", "content": system}]
-            messages += memory.history(as_format="messages")
-            messages.append({"role": "user", "content": user_msg})
-
-            # 3. Show exactly what a real API call would receive.
-            print("\n>>> messages (OpenAI chat.completions, system-first + history + current turn):")
-            pprint(messages, sort_dicts=False, width=100)
-
-            # 4. THINK — your model answers from the messages array.
-            answer = simulated_assistant(messages)
-            print(f"\n--- simulated assistant: {answer!r}")
-
-            # 5. TOKENS — counted over the ACTUAL round-trip, by section:
-            #    system  = the whole system message (base prompt + Nexus's injected
-            #              directives/facts), input = the rest of the prompt
-            #              (history + this user turn), output = the model's reply.
-            usage = memory.tokens(
-                ["system", "input", "output"], messages=messages, response=answer
-            )
-            print(f">>> Nexus tokens -- system:{usage['system']} input:{usage['input']} "
-                  f"output:{usage['output']} total:{usage['total']}")
-
-            # 6. WRITE — persist the exchange so the next turn's history() has it.
-            memory.process({
-                "action": "ingest",
-                "interaction": {"query": user_msg, "response": answer},
-            })
-            memory.wait()  # ingest is async; wait so history() sees the new turn
-
-        # Truncation knobs: turn-bounded or (approximate) token-bounded windows.
-        # Both are done by NEXUS — it counts and trims, not the caller.
-        print("\n########## history() truncation ##########")
-        print("last 2 turns (turn-bounded):")
-        pprint(memory.history(max_turns=2), sort_dicts=False, width=100)
-
-        # Token-bounded: Nexus keeps the newest turns that fit the budget, using
-        # its own internal len//4 counter (same as working.token_estimate).
-        print("\nlast ~20 tokens (token-bounded, Nexus trims):")
-        pprint(memory.history(max_tokens=20), sort_dicts=False, width=100)
-
-        print("\nas a plain string (e.g. to embed in a system prompt):")
-        print(memory.history(max_turns=2, as_format="string"))
-        print("---")
-        print(memory.history(max_tokens=20, as_format="string"))
+            print(f"########## TURN {turn} ##########")
+            print(run_turn(memory, user_msg))
+            print()
     finally:
         memory.close()
         # Remove the DB (and SQLite's -wal/-shm sidecars) so each run is clean.

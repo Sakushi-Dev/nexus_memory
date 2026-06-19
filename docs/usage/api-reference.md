@@ -468,7 +468,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 | `working_snapshot()` | `list[dict]` | Volatile Layer I buffer `[{role, content, timestamp}, ...]` (`[]` if unwired). |
 | `reconstruct(time_range=None)` | `str` | Human-readable episodic transcript. |
 | `history(*, role=None, max_turns=None, max_tokens=None, token_counter=None, as_format="messages", template="{role}: {content}")` | `list[dict]` **or** `str` | Native LLM message history over the durable episodic layer (working buffer fallback). Three formats, two truncation modes, optional role filter. See [history()](#history--native-message-history) below. |
-| `tokens(scope="full", *, messages=None, response=None, counter=None)` | `int` **or** `dict[str, int]` | Token accounting over the **actual round-trip** (`messages` array + `response`), split by section: `system` (the whole system message), `input` (user/assistant messages), `output` (the reply). `int` for one scope; `{scope: int}` + `"total"` for a list. See [tokens()](#tokens--token-accounting) below. |
+| `tokens(scope="full", *, messages=None, response=None, config=None)` | `int` **or** `dict[str, int]` | Token accounting over the **actual round-trip** (`messages` array + `response`), split by section: `system` (the whole system message), `input` (user/assistant messages), `output` (the reply). `config=` picks the counter (default `len(s)//4`, or optional `tiktoken`). `int` for one scope; `{scope: int}` + `"total"` for a list. See [tokens()](#tokens--token-accounting) below. |
 | `distill()` | `{"status": "success", "promoted": [...]}` | Promote facts → rules. |
 | `pending_summaries(limit=None)` | `list[dict]` **or** error dict | Diary outbox jobs (handoff shape above). Error dict when the diary is off. |
 | `submit_summary(job_id, summary)` | `{"status", "applied"}` or error dict | Apply a model summary. Error dict when the diary is off. |
@@ -552,10 +552,9 @@ A method-only convenience accessor on
 [`NexusMemory`](../../src/nexus_memory/core/orchestrator.py) (no `process()`
 action) that counts tokens over the **actual LLM round-trip** — the request
 `messages` array plus the model's `response`, i.e. exactly what crosses the wire
-— and splits it by *section* (not storage layer). It bundles the previously
-scattered `len(s) // 4` heuristics (`xml_format.estimate_tokens`,
-`WorkingMemory.token_estimate`, the `history()` counter default) behind one API,
-and lets you swap in a real tokenizer.
+— and splits it by *section* (not storage layer). By default it uses the offline
+`len(s) // 4` heuristic; via `config=` you can switch to the optional **tiktoken**
+backend (or any custom counter) for exact counts.
 
 - **system** — the full system message(s): the host's base prompt **and**
   everything Nexus injects into it (`directives` + `facts`). Because the recalled
@@ -569,8 +568,12 @@ and lets you swap in a real tokenizer.
 ```python
 messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": user_msg}]
 answer = your_llm.chat(messages)
+
 usage = memory.tokens(["system", "input", "output"], messages=messages, response=answer)
-# {"system": 52, "input": 35, "output": 8, "total": 95}
+# {"system": 52, "input": 35, "output": 8, "total": 95}  (default len//4 heuristic)
+
+exact = memory.tokens("full", messages=messages, response=answer, config="gpt-4o")
+# exact tiktoken count (requires: pip install nexus-memory[tiktoken])
 ```
 
 **Parameters:**
@@ -580,7 +583,7 @@ usage = memory.tokens(["system", "input", "output"], messages=messages, response
 | `scope` | `str \| list[str]` | `"full"` | What to count (below). A list yields a per-scope breakdown. Unknown scopes raise `ValueError`. |
 | `messages` | `list[dict] \| None` | `None` | The request array you send the LLM (`[{role, content}]`). Used by `system`/`input`/`full`; treated as `[]` if omitted. |
 | `response` | `str \| None` | `None` | The model's reply text (the `output`); `""` if omitted. |
-| `counter` | `(str) -> int \| None` | `None` | How to count. Defaults to the shared `len(s) // 4` heuristic; pass a real tokenizer (e.g. `tiktoken`) for exact counts. |
+| `config` | `None \| callable \| str \| dict` | `None` | **How to count.** `None` → offline `len(s) // 4` heuristic; a `(str) -> int` callable → used as-is; `"tiktoken"` → tiktoken's `cl100k_base`; a model name (e.g. `"gpt-4o"`) → tiktoken's encoding for that model; `{"model"\|"encoding": ...}` → explicit tiktoken selection. Requesting tiktoken without it installed raises `ImportError`. |
 
 **Scopes:**
 
@@ -593,6 +596,10 @@ usage = memory.tokens(["system", "input", "output"], messages=messages, response
 
 **Return** — `int` for a single scope; for a list, a `{scope: int}` dict with an
 extra `"total"` key (the sum of the listed scopes).
+
+> **Optional tiktoken.** The default counter is offline and dependency-free. For
+> exact token counts install the extra — `pip install nexus-memory[tiktoken]` —
+> and pass `config="tiktoken"`, a model name, or `{"encoding": "cl100k_base"}`.
 
 ---
 
