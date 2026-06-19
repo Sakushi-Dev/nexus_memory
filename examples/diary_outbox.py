@@ -1,22 +1,32 @@
 """Layer V — the diary as an async outbox drained on a secondary model.
 
-Nexus **never calls an LLM itself**. When a daily summary is due it just enqueues
-a *job* into an outbox; the host drains it on its own model, out-of-band. That
-makes the diary **asynchronous** and **provider-agnostic**: the chat only
-*ingests* (fast, non-blocking), while a **secondary model** summarizes later.
+Nexus **never calls an LLM itself**. When a session summary is due it just
+enqueues a *job* into an outbox; the host drains it on its own model,
+out-of-band. That makes the diary **asynchronous** and **provider-agnostic**:
+the chat only *ingests* (fast, non-blocking), while a **secondary model**
+summarizes later.
+
+The diary is now **session-scoped**: an entry tracks the current
+``NexusMemory`` process run (the orchestrator's ``session_id``), not a calendar
+day. The CURRENT session's entry is always injected into ``<memory_context>``
+(even before it is finalized); ``inject_sessions`` (default 1) adds that many
+previous finalized sessions, and a single growing ``<persistent_summary>`` folds
+every ``sessions_per_summary`` (default 6) sessions, capped at
+``summary_max_sentences`` (default 300). This whole demo runs in ONE process, so
+both rounds below land in the SAME session and roll its single entry.
 
 Each job carries Nexus's OWN ``prompt`` plus the prior entry
 (``prior_summary``) and the recent turns (``input``). The host just runs that
 prompt — Nexus owns the instruction. The diary is the **assistant's own
-first-person journal**: ``DAILY_PROMPT`` asks the model to reflect on the whole
+first-person journal**: ``SESSION_PROMPT`` asks the model to reflect on the whole
 exchange (user + assistant) in its own voice, as flowing prose of 2-N sentences.
 
 The job re-sends a **rolling, overlapping window** — up to ``diary_window`` turns
-of the day (default 20 turns = 40 rows), not a strict delta. Because the prior
-entry is fed back in every time and the prompt asks the model to reconcile, the
-diary **rolls**: a newer turn that corrects an earlier one revises the entry, and
-turns already reflected in the prior entry are NOT restated (overlap by design,
-reconciled — never naively appended).
+of the session (default 20 turns = 40 rows), not a strict delta. Because the
+prior entry is fed back in every time and the prompt asks the model to reconcile,
+the diary **rolls**: a newer turn that corrects an earlier one revises the entry,
+and turns already reflected in the prior entry are NOT restated (overlap by
+design, reconciled — never naively appended).
 
 We ingest in two rounds to show that: round 2 contradicts round 1 (the deadline
 moves), and the prior entry flows into the next job.
@@ -35,8 +45,9 @@ from nexus_memory import DiaryConfig, NexusMemory
 
 DB_PATH = Path("nexus_memory.db")
 
-# update_every=5 (the default) -> one daily job per 5 interactions, so each round
-# below (5 interactions) enqueues exactly one summary job.
+# update_every=5 (the default) -> one session job per 5 interactions, so each
+# round below (5 interactions) enqueues exactly one summary job that rolls the
+# current session's single entry.
 ROUND_1 = [
     ("My name is Chris and I'm building a memory library.", "Nice to meet you, Chris."),
     ("I prefer Python and my deadline is next Friday.", "Noted - Python, Friday."),
@@ -49,7 +60,7 @@ ROUND_2 = [
     ("I started writing tests today.", "Nice - tests under way."),
     ("Feeling good about the progress.", "Great to hear."),
     ("I added a diary layer.", "A diary layer - nice touch."),
-    ("Wrapping up for the day.", "Rest well, Chris."),
+    ("Wrapping up for now.", "Rest well, Chris."),
 ]
 
 
@@ -86,30 +97,36 @@ def secondary_model(job: dict) -> str:
 
     if prior:
         return f"{prior} Continuing on, {new}." if new else prior
-    return f"Today {new}." if new else "Nothing notable happened today."
+    return f"This session {new}." if new else "Nothing notable happened this session."
 
 
 def run_round(memory: NexusMemory, interactions: list[tuple[str, str]]) -> str:
     # The conversation only INGESTS — fast, non-blocking; no summarizer runs here.
     for query, response in interactions:
         memory.process({"action": "ingest", "interaction": {"query": query, "response": response}})
-    memory.wait()  # finish async ingest -> the daily job is now in the outbox
+    memory.wait()  # finish async ingest -> the session job is now in the outbox
 
     # Drain the outbox out-of-band on the secondary model — one call.
     applied = memory.drain_diary(secondary_model)
 
-    day = memory.inspect(type="diary")["data"]["days"][0]
+    # Both rounds run in one process = one session; read the current (newest) entry.
+    session = memory.inspect(type="diary")["data"]["sessions"][-1]
     turns = "\n".join(f"  user: {q}" for q, _ in interactions)
     return (
         f"{turns}\n"
         f"-> drained {applied} job(s)\n"
-        f"-> diary [{day['period']}]: {day['summary']}"
+        f"-> diary [session {session['session_id']}, seq {session['seq']}]: "
+        f"{session['summary']}"
     )
 
 
 def main() -> None:
     # Opt in to Layer V. The default cadence is update_every=5; each round below
-    # has exactly 5 interactions so each enqueues one daily job.
+    # has exactly 5 interactions so each enqueues one session job. The current
+    # session's entry is always injected; inject_sessions (default 1) adds that
+    # many previous finalized sessions, and a single persistent_summary folds
+    # every sessions_per_summary (default 6) sessions, capped at
+    # summary_max_sentences (default 300). All knobs live on DiaryConfig.
     memory = NexusMemory(diary=DiaryConfig(enabled=True), db_path=str(DB_PATH))
     try:
         # Each round returns its text; main() prints it.

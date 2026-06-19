@@ -18,10 +18,9 @@ SDK.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable
 
-from .prompts import DAILY_PROMPT, SECTION_PROMPT
+from .prompts import SESSION_PROMPT, SUMMARY_PROMPT
 
 if TYPE_CHECKING:  # avoid an import cycle at runtime
     from ...core.db import NexusDB
@@ -35,10 +34,8 @@ logger = logging.getLogger(__name__)
 # the window read multiplies by this to get its row budget (no inlined ``*2``).
 ROWS_PER_TURN = 2
 
-
-def _default_today() -> str:
-    """Return the current UTC day as ``YYYY-MM-DD``."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+# The singleton ``persistent_summary`` row's target (the one-pending invariant).
+SUMMARY_TARGET = "1"
 
 
 class DiaryScheduler:
@@ -48,8 +45,9 @@ class DiaryScheduler:
         store: The diary persistence (owns the 3 tables).
         db: The shared :class:`NexusDB` (owns the connection + write lock).
         config: The diary layer's own :class:`DiaryConfig`.
-        today: Optional zero-arg callable returning a ``YYYY-MM-DD`` UTC string
-            (tests inject it); defaults to :func:`_default_today`.
+        session: Zero-arg callable returning the current ``session_id`` (the
+            orchestrator injects ``lambda: self.session_id``; tests inject a
+            stub).
     """
 
     def __init__(
@@ -57,25 +55,24 @@ class DiaryScheduler:
         store: "DiaryStore",
         db: "NexusDB",
         config: "DiaryConfig",
-        today: Callable[[], str] | None = None,
+        session: Callable[[], str],
     ) -> None:
         self.store = store
         self.db = db
         self.config = config
-        self._today = today or _default_today
+        self._session = session
 
     # ------------------------------------------------------------------ #
     # episodic read helper (direct, no EpisodicStore import)
     # ------------------------------------------------------------------ #
-    def _recent_turns(self, day: str, covered_through: int) -> list[dict]:
-        """Return the day's rolling daily window, oldest-first (both roles).
+    def _recent_turns(self, session_id: str, covered_through: int) -> list[dict]:
+        """Return the session's rolling window, oldest-first (both roles).
 
-        Reads ``episodic_turns`` directly via the shared connection, bounded to
-        the UTC day in the sortable ``YYYY-MM-DD HH:MM:SS`` text space using an
-        exclusive next-day upper bound (so the whole-second ``_utc_now_str``
-        format is load-bearing).
+        Reads ``episodic_turns`` directly via the shared connection, scoped to the
+        current session via ``episodic_turns.session_id == session_id`` (episodic
+        tags each turn with the session id at ingest time).
 
-        The window is rows whose ``id`` is in ``[lower, newest]`` for the day,
+        The window is rows whose ``id`` is in ``[lower, newest]`` for the session,
         where::
 
             lower = min(covered_through + 1,
@@ -83,19 +80,13 @@ class DiaryScheduler:
 
         so it ALWAYS includes at least the last ``diary_window`` turns (overlap,
         for reconciliation) AND never drops anything ingested since the last
-        applied drain (completeness). If the window's lower edge sits above
-        ``covered_through + 1`` (the host drained slower than ``diary_window``
-        turns) the older uncovered turns would be skipped — but the ``min(...)``
-        anchors the lower edge at ``covered_through + 1`` precisely to keep
-        completeness, so that case does not arise. After slicing, a single
-        leading ``role=='assistant'`` row is dropped (B7) to avoid an orphaned
-        assistant whose paired user row fell outside the window.
+        applied drain (completeness). After slicing, a single leading
+        ``role=='assistant'`` row is dropped (B7) to avoid an orphaned assistant
+        whose paired user row fell outside the window.
         """
-        upper = self._next_day(day)
         newest_row = self.db.conn.execute(
-            "SELECT MAX(id) AS m FROM episodic_turns "
-            "WHERE timestamp >= ? AND timestamp < ?",
-            (f"{day} 00:00:00", upper),
+            "SELECT MAX(id) AS m FROM episodic_turns WHERE session_id = ?",
+            (session_id,),
         ).fetchone()
         newest = newest_row["m"] if newest_row is not None else None
         if newest is None:
@@ -106,9 +97,9 @@ class DiaryScheduler:
 
         rows = self.db.conn.execute(
             "SELECT id, role, content, timestamp FROM episodic_turns "
-            "WHERE id >= ? AND id <= ? AND timestamp >= ? AND timestamp < ? "
+            "WHERE session_id = ? AND id >= ? AND id <= ? "
             "ORDER BY id ASC",
-            (lower, newest, f"{day} 00:00:00", upper),
+            (session_id, lower, newest),
         ).fetchall()
         window = [dict(r) for r in rows]
 
@@ -118,70 +109,74 @@ class DiaryScheduler:
             window = window[1:]
         return window
 
-    @staticmethod
-    def _next_day(day: str) -> str:
-        """Return the exclusive next-day upper bound ``YYYY-MM-DD 00:00:00``."""
-        d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        return (d + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
-
     # ------------------------------------------------------------------ #
     # §4.1 — on each ingested interaction
     # ------------------------------------------------------------------ #
-    def on_interaction(self, day: str | None = None) -> None:
+    def on_interaction(self, session_id: str | None = None) -> None:
         """Advance the state machine for one ingested interaction (§4.1)."""
         with self.db.lock:
-            day = day or self._today()
-            last = self.store.max_day()
+            session_id = session_id or self._session()
+            last = self.store.max_seq_session()
 
-            # 1. Day rollover: close the previous (older) day.
-            if last is not None and day > last:
-                row = self.store.get_day(last)
-                if row and not row["finalized"]:
-                    self.store.finalize_day(last)
-                    self._enqueue_daily(last, force=True)
+            # 1. Session rollover: close the previous (older) session when a new
+            #    session id is seen while the last one is still open.
+            if (
+                last is not None
+                and last["session_id"] != session_id
+                and not last["finalized"]
+            ):
+                self.store.finalize_session(last["session_id"])
+                self._enqueue_session(last["session_id"], force=True)
 
-            # 2. Upsert today + count this interaction.
-            self.store.upsert_day(day)
-            count = self.store.bump_interaction(day)
+            # 2. Upsert the current session + count this interaction.
+            self.store.upsert_session(session_id)
+            count = self.store.bump_interaction(session_id)
 
-            # 3. Daily cadence.
+            # 3. Session cadence.
             if count % self.config.update_every == 0:
-                self._enqueue_daily(day)
+                self._enqueue_session(session_id)
 
-    def _enqueue_daily(self, day: str, *, force: bool = False) -> None:
-        """Enqueue a rolling daily job for ``day``.
+            # 4. Fold trigger: enough finalized-unfolded sessions accumulated.
+            if (
+                len(self.store.finalized_unfolded_sessions())
+                >= self.config.sessions_per_summary
+            ):
+                self._enqueue_summary()
 
-        Sends an overlapping window of the day's recent turns (both roles), not a
-        strict delta — see :meth:`_recent_turns`. ``covered_through`` no longer
-        gates the window; it is the last-applied high-water mark and the
+    def _enqueue_session(self, session_id: str, *, force: bool = False) -> None:
+        """Enqueue a rolling session job for ``session_id``.
+
+        Sends an overlapping window of the session's recent turns (both roles),
+        not a strict delta — see :meth:`_recent_turns`. ``covered_through`` no
+        longer gates the window; it is the last-applied high-water mark and the
         idempotency signal for the empty-tick guard below.
 
-        Guard ordering (B2/B3): the day row must exist, the window must be
-        non-empty (avoid ``max([])``), then — unless ``force`` — skip when
-        nothing advanced since the last applied summary. ``finalize()`` and the
-        rollover branch pass ``force=True`` so a finalized-but-unfolded day is
-        never stranded by the empty-tick guard (B3).
+        Guard ordering (B2/B3): the session row must exist, the window must be
+        non-empty (avoid ``max([])``), then — unless ``force`` — skip when nothing
+        advanced since the last applied summary. ``finalize()`` and the rollover
+        branch pass ``force=True`` so a finalized-but-unfolded session is never
+        stranded by the empty-tick guard (B3).
         """
-        row = self.store.get_day(day)
+        row = self.store.get_session(session_id)
         if row is None:
             return
-        window = self._recent_turns(day, row["covered_through"])
+        window = self._recent_turns(session_id, row["covered_through"])
         if not window:
             return
         advance_to = max(t["id"] for t in window)
         if not force and advance_to == row["covered_through"]:
             return  # empty-tick guard: nothing new ingested since the last apply
         self.store.enqueue_job(
-            kind="daily",
-            target=day,
-            prompt=DAILY_PROMPT.format(max_sentences=self.config.max_sentences),
+            kind="session",
+            target=session_id,
+            prompt=SESSION_PROMPT.format(max_sentences=self.config.max_sentences),
             prior_summary=row["summary"] or "",
             items=window,
             advance_to=advance_to,
         )
 
     # ------------------------------------------------------------------ #
-    # submit — routes to daily/section apply; idempotent
+    # submit — routes to session/summary apply; idempotent
     # ------------------------------------------------------------------ #
     def submit(self, job_id: str, text: str) -> dict:
         """Apply a host-supplied summary to its job; idempotent (§4.2/§4.4)."""
@@ -201,80 +196,87 @@ class DiaryScheduler:
                     "applied": job["kind"],
                     "note": "already " + job["status"],
                 }
-            if job["kind"] == "daily":
-                self._apply_daily(job, text)
-                return {"status": "success", "applied": "daily"}
-            self._apply_section(job, text)
-            return {"status": "success", "applied": "section"}
+            if job["kind"] == "session":
+                self._apply_session(job, text)
+                return {"status": "success", "applied": "session"}
+            self._apply_summary(job, text)
+            return {"status": "success", "applied": "summary"}
 
     # ------------------------------------------------------------------ #
-    # §4.2 — apply a daily summary
+    # §4.2 — apply a session summary
     # ------------------------------------------------------------------ #
-    def _apply_daily(self, job: dict, text: str) -> None:
-        """Persist a daily summary; maybe trigger a section fold (§4.2)."""
-        day = job["target"]
-        self.store.set_day_summary(day, text, job["advance_to"])
+    def _apply_session(self, job: dict, text: str) -> None:
+        """Persist a session summary; maybe trigger a summary fold (§4.2)."""
+        session_id = job["target"]
+        self.store.set_session_summary(session_id, text, job["advance_to"])
         self.store.mark_job_done(job["job_id"])
-        row = self.store.get_day(day)
-        if row["finalized"] and not row["folded"]:
-            self._enqueue_section()
+        if (
+            len(self.store.finalized_unfolded_sessions())
+            >= self.config.sessions_per_summary
+        ):
+            self._enqueue_summary()
 
     # ------------------------------------------------------------------ #
-    # §4.3 — fold a finalized day into the persistent ring
+    # §4.3 — fold finalized sessions into the single persistent summary
     # ------------------------------------------------------------------ #
-    def _enqueue_section(self) -> None:
-        """Enqueue at most ONE pending section job; fold chronologically (§4.3)."""
-        if self.store.pending_section_job() is not None:
+    def _enqueue_summary(self) -> None:
+        """Enqueue at most ONE pending summary job; batch the next fold (§4.3)."""
+        if self.store.pending_summary_job() is not None:
             return
-        pend = self.store.finalized_unfolded_days()
-        if not pend:
+        pend = self.store.finalized_unfolded_sessions()
+        if len(pend) < self.config.sessions_per_summary:
             return
-        D = pend[0]
-        sec = self.store.open_section() or self.store.allocate_section(
-            self.config.max_sections
-        )
+        batch = pend[: self.config.sessions_per_summary]
+        current = self.store.get_summary()
+        prior = current["summary"] if current is not None else ""
+        items = [
+            {"session_id": s["session_id"], "summary": s["summary"]} for s in batch
+        ]
         self.store.enqueue_job(
-            kind="section",
-            target=str(sec["seq"]),
-            prompt=SECTION_PROMPT,
-            prior_summary=sec["summary"] or "",
-            items=[{"period": D["period"], "summary": D["summary"]}],
+            kind="summary",
+            target=SUMMARY_TARGET,
+            prompt=SUMMARY_PROMPT.format(
+                summary_max_sentences=self.config.summary_max_sentences
+            ),
+            prior_summary=prior,
+            items=items,
             advance_to=None,
         )
 
     # ------------------------------------------------------------------ #
-    # §4.4 — apply a section summary (fold + freeze + ring)
+    # §4.4 — apply a summary fold (extend the single row; no ring/freeze)
     # ------------------------------------------------------------------ #
-    def _apply_section(self, job: dict, text: str) -> None:
-        """Fold the day into its section; freeze + allocate at capacity (§4.4)."""
-        seq = int(job["target"])
-        sec = self.store.get_section_by_seq(seq)
-        if sec is None:
-            self.store.mark_job_done(job["job_id"])
-            return
-        D = job["input_obj"]["items"][0]["period"]
-        self.store.apply_section(sec["slot"], text, D)
-        self.store.mark_folded(D)
+    def _apply_summary(self, job: dict, text: str) -> None:
+        """Extend the single persistent summary; mark folded sessions (§4.4)."""
+        items = job["input_obj"].get("items", [])
+        folded: list[dict] = []
+        for item in items:
+            session_id = item["session_id"]
+            row = self.store.get_session(session_id)
+            if row is not None:
+                folded.append(row)
+        self.store.upsert_summary(text, folded)
+        for row in folded:
+            self.store.mark_folded(row["session_id"])
         self.store.mark_job_done(job["job_id"])
 
-        sec = self.store.get_section_by_seq(seq)
-        if sec["diary_count"] >= self.config.section_size:
-            self.store.freeze_section(sec["slot"])
-            self.store.allocate_section(self.config.max_sections)
-
-        # Drain the fold queue (next finalized-unfolded day, in order).
-        self._enqueue_section()
+        # Drain: another full batch of finalized-unfolded sessions may remain.
+        if (
+            len(self.store.finalized_unfolded_sessions())
+            >= self.config.sessions_per_summary
+        ):
+            self._enqueue_summary()
 
     # ------------------------------------------------------------------ #
     # §4.5 — close
     # ------------------------------------------------------------------ #
     def finalize(self) -> None:
-        """Finalize the current day and enqueue its final daily job (§4.5)."""
+        """Finalize the current session + enqueue its final session job (§4.5)."""
         with self.db.lock:
-            day = self.store.max_day()
-            if day is None:
+            last = self.store.max_seq_session()
+            if last is None:
                 return
-            row = self.store.get_day(day)
-            if row and not row["finalized"]:
-                self.store.finalize_day(day)
-            self._enqueue_daily(day, force=True)
+            session_id = last["session_id"]
+            if not last["finalized"]:
+                self.store.finalize_session(session_id)
+            self._enqueue_session(session_id, force=True)

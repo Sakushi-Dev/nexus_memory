@@ -404,11 +404,11 @@ memory.process({"action": "pending_summaries"})
     "jobs": [
         {
             "job_id": "<uuid4>",
-            "kind": "daily" | "section",
-            "period": "2026-06-17" | None,   # job["target"] for kind="daily", else None
+            "kind": "session" | "summary",
+            "session": "<session_id>" | None,   # job["target"] for kind="session", else None
             "prompt": "<Nexus-owned prompt; forward verbatim>",
-            "prior_summary": str | None,     # rolling summary to refine
-            "input": [ {"id": int, "role": str, "content": str}, ... ],  # daily: rolling overlapping window (both roles, up to diary_window turns)
+            "prior_summary": str | None,        # rolling summary to refine/extend
+            "input": [ {"id": int, "role": str, "content": str}, ... ],  # session: rolling overlapping window (both roles, up to diary_window turns); summary: the session entries to fold
         },
         ...
     ],
@@ -445,7 +445,7 @@ memory.process({"action": "submit_summary", "job_id": jid, "summary": "The user 
 **Response:**
 
 ```python
-{"status": "success" | "not_found" | "superseded", "applied": "daily" | "section" | None}
+{"status": "success" | "not_found" | "superseded", "applied": "session" | "summary" | None}
 ```
 
 Idempotent: resubmitting a done/superseded job is a safe no-op.
@@ -460,7 +460,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 
 | Method | Returns | Notes |
 |--------|---------|-------|
-| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"days": [...], "sections": [...]}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. |
+| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"sessions": [...], "summary": {...} | None}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. |
 | `forget(**kw)` | forget dict | Wraps `TransparencyInterface.forget` (`fact_id=` or `query=`). |
 | `remember_rule(directive, category="other", priority=5, source="manual")` | rule dict | Add/reactivate a directive. Unlike `process(rule add)`, `source` is settable. |
 | `list_rules(active_only=True)` | `list[dict]` | Stored procedural rules. |

@@ -7,13 +7,13 @@ itself.
 
 from __future__ import annotations
 
-# ``DAILY_PROMPT`` is a TEMPLATE: ``{max_sentences}`` is filled at enqueue time in
-# ``DiaryScheduler._enqueue_daily`` via
-# ``DAILY_PROMPT.format(max_sentences=self.config.max_sentences)``. The job ships
+# ``SESSION_PROMPT`` is a TEMPLATE: ``{max_sentences}`` is filled at enqueue time
+# in ``DiaryScheduler._enqueue_session`` via
+# ``SESSION_PROMPT.format(max_sentences=self.config.max_sentences)``. The job ships
 # the already-formatted string (still Nexus-owned, just parameterized). The lower
 # bound stays 2.
-DAILY_PROMPT = (
-    "You are the assistant. Keep a personal diary of your day, written in your "
+SESSION_PROMPT = (
+    "You are the assistant. Keep a personal diary of this session, written in your "
     "own voice in the first person ('I'). Given your prior entry and the recent "
     "turns of the conversation — both what the user said and what you said in "
     "reply — produce an updated entry of 2-{max_sentences} sentences, sized to "
@@ -29,9 +29,15 @@ DAILY_PROMPT = (
     "than keeping both."
 )
 
-SECTION_PROMPT = (
-    "You are the assistant, keeping a rolling multi-day record in your own "
-    "first-person voice. Given your prior section summary and a new day's diary "
-    "entry, weave them into a single coherent paragraph of flowing prose — never "
-    "lists or headings — that preserves the throughline across the period."
+# ``SUMMARY_PROMPT`` is a TEMPLATE: ``{summary_max_sentences}`` is filled at
+# enqueue time in ``DiaryScheduler._enqueue_summary`` via
+# ``SUMMARY_PROMPT.format(summary_max_sentences=self.config.summary_max_sentences)``.
+SUMMARY_PROMPT = (
+    "You are the assistant, keeping one growing persistent summary of everything "
+    "across your sessions, written in your own first-person voice. Given your "
+    "prior persistent summary and these new session entries, extend it into a "
+    "single coherent first-person prose summary of up to {summary_max_sentences} "
+    "sentences — never lists or headings. Preserve the throughline across all "
+    "sessions, weave in the genuinely new developments, and drop redundancy "
+    "rather than restating what the prior summary already covered."
 )

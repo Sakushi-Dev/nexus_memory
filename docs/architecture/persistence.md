@@ -127,8 +127,8 @@ exist **only** when the diary layer (Layer V) is enabled.
  │                        source, timestamp)                                     │
  ├────────────────────────────────────────────────────────────────────────────┤
  │ DIARY   (created by DiaryStore — ONLY when Layer V is enabled)                │
- │   diary_days          (period PK, summary, covered_through, ...)              │  V
- │   persistent_sections (slot PK, seq, summary, diary_count, ...)               │  V
+ │   diary_sessions      (session_id PK, seq, summary, covered_through, ...)     │  V
+ │   persistent_summary  (id PK CHECK(id=1), summary, session_count, ...)        │  V
  │   summarization_jobs  (job_id PK, kind, target, status, prompt, ...)          │  V outbox
  └────────────────────────────────────────────────────────────────────────────┘
    Layer I (Working memory) is RAM-only — it has no tables.
@@ -255,28 +255,37 @@ Created on construction of
 the diary layer is active. The DDL lives in the store module (not `schema.sql`),
 so a deployment that never enables the diary never creates these tables.
 
-**`diary_days`** (L1 — one row per UTC day):
+**`diary_sessions`** (L1 — one row per session):
+
+A "session" is one `NexusMemory` process run, identified by
+`orchestrator.session_id` (a `uuid4`). Because uuids are not orderable, the store
+assigns each new session a monotonic `seq` (1, 2, 3, …) that orders
+`current`/`previous` and triggers the fold.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `period` | `TEXT PRIMARY KEY` | `YYYY-MM-DD` (matches turn timestamps). |
-| `summary` | `TEXT DEFAULT ''` | Latest narrative for the day. |
-| `covered_through` | `INTEGER DEFAULT 0` | Max `episodic_turns.id` already folded in. |
-| `interaction_count` | `INTEGER DEFAULT 0` | Interactions seen this day. |
-| `finalized` | `INTEGER DEFAULT 0` | `1` once the day is closed. |
-| `folded` | `INTEGER DEFAULT 0` | `1` once folded into a persistent section. |
+| `session_id` | `TEXT PRIMARY KEY` | The `orchestrator.session_id` (uuid4) of the session. |
+| `seq` | `INTEGER UNIQUE` | Monotonic order (`1,2,3…`); orders current/previous + the fold. |
+| `summary` | `TEXT DEFAULT ''` | The session narrative (rolling). |
+| `covered_through` | `INTEGER DEFAULT 0` | Last-applied high-water mark (max `episodic_turns.id` folded in). |
+| `interaction_count` | `INTEGER DEFAULT 0` | Interactions seen this session. |
+| `finalized` | `INTEGER DEFAULT 0` | `1` once the session is closed (rollover/`close()`). |
+| `folded` | `INTEGER DEFAULT 0` | `1` once folded into the persistent summary. |
+| `created_at` | `TEXT` | UTC timestamp. |
 | `updated_at` | `TEXT` | UTC timestamp. |
 
-**`persistent_sections`** (L2 — a ring of `M` physical slots):
+**`persistent_summary`** (L2 — a single growing row, not a ring):
+
+One singleton row. The first fold creates it; every subsequent fold **extends**
+the same `summary` (no freeze, no ring). It is capped at `summary_max_sentences`
+(default 300) by the host's summarizer.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `slot` | `INTEGER PRIMARY KEY` | Physical ring slot `0 .. M-1`. |
-| `seq` | `INTEGER` | Monotonic logical order (higher = newer). |
-| `summary` | `TEXT DEFAULT ''` | Section narrative. |
-| `diary_count` | `INTEGER DEFAULT 0` | Daily diaries folded so far. |
-| `first_day` / `last_day` | `TEXT` | Coverage range. |
-| `frozen` | `INTEGER DEFAULT 0` | `1` once `diary_count` hits section capacity. |
+| `id` | `INTEGER PRIMARY KEY CHECK (id = 1)` | Singleton row — always `1`. |
+| `summary` | `TEXT DEFAULT ''` | The single growing summary. |
+| `session_count` | `INTEGER DEFAULT 0` | Sessions folded so far. |
+| `first_session` / `last_session` | `TEXT` | Covered range (`session_id`). |
 | `updated_at` | `TEXT` | UTC timestamp. |
 
 **`summarization_jobs`** (the outbox — Nexus never calls an LLM itself):
@@ -284,12 +293,12 @@ so a deployment that never enables the diary never creates these tables.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `job_id` | `TEXT PRIMARY KEY` | `uuid4`. |
-| `kind` | `TEXT NOT NULL` | `'daily'` or `'section'`. |
-| `target` | `TEXT NOT NULL` | Daily: the `YYYY-MM-DD`; section: the `seq` as text. |
+| `kind` | `TEXT NOT NULL` | `'session'` or `'summary'`. |
+| `target` | `TEXT NOT NULL` | Session: the `session_id`; summary: the constant `'1'` (the singleton). |
 | `status` | `TEXT NOT NULL DEFAULT 'pending'` | `'pending'` / `'done'` / `'superseded'`. |
 | `prompt` | `TEXT NOT NULL` | Nexus-owned instruction (host forwards verbatim). |
 | `input_json` | `TEXT NOT NULL` | JSON `{prior_summary, items:[...]}`. |
-| `advance_to` | `INTEGER` | Daily: `covered_through` to set on apply; section: day folded. |
+| `advance_to` | `INTEGER` | Session: `covered_through` to set on apply; summary: `NULL`. |
 | `created_at` | `TEXT NOT NULL` | UTC timestamp. |
 | `answered_at` | `TEXT` | Set when marked `done`. |
 

@@ -166,7 +166,12 @@ class NexusMemory:
         if diary_config is not None and diary_config.enabled:
             from ..layers.diary.layer import DiaryLayer
 
-            diary_layer = DiaryLayer(self.db, self.episodic, diary_config)
+            diary_layer = DiaryLayer(
+                self.db,
+                self.episodic,
+                diary_config,
+                session=lambda: self.session_id,
+            )
             # Append AFTER episodic+procedural so the diary consolidator runs last.
             self.consolidators.append(diary_layer.consolidator)
             self._diary = diary_layer
@@ -452,11 +457,11 @@ class NexusMemory:
             else:
                 logger.warning(
                     "drain_diary: host run_job returned no summary for %s job %r "
-                    "(period %r); the diary is enabled so this job stays pending -- "
+                    "(session %r); the diary is enabled so this job stays pending -- "
                     "check the host model (e.g. a removed/invalid aux model).",
                     job.get("kind", "?"),
                     job.get("job_id", "?"),
-                    job.get("period"),
+                    job.get("session"),
                 )
         return applied
 

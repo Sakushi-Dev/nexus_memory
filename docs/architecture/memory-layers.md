@@ -5,7 +5,8 @@ This page is a deep dive on the four core cognitive layers of Nexus Memory —
 For each it covers what the layer stores, its owning module, how it persists,
 its key classes and methods, and how the layers interact on **ingest** (write
 fan-out) and **assemble** (read composition). The optional **Diary (Layer V)**
-narrative arc gets its own page — see [The Diary Layer](diary-layer.md).
+session-wise narrative arc gets its own page — see
+[The Diary Layer](diary-layer.md).
 
 For the wider picture (the orchestrator, the full ingest/assemble dataflow, the
 extension seams) see the [Architecture Overview](overview.md). For how facts are
@@ -28,7 +29,7 @@ point; the layers are additive and the original response keys are never removed.
 | **II** | Episodic | "What happened, verbatim, and when?" | SQLite | [`episodic/episodic.py`](../../src/nexus_memory/layers/episodic/episodic.py), [`episodic/summarization.py`](../../src/nexus_memory/layers/episodic/summarization.py) |
 | **III** | Semantic | "What facts do I know?" | SQLite + vectors | [`semantic/writer.py`](../../src/nexus_memory/layers/semantic/writer.py), [`semantic/reader.py`](../../src/nexus_memory/layers/semantic/reader.py) |
 | **IV** | Procedural | "How should I behave?" | SQLite | [`procedural/procedural.py`](../../src/nexus_memory/layers/procedural/procedural.py) |
-| **V** | Diary *(optional)* | "What is the long-arc narrative?" | SQLite (only when enabled) | [`layers/diary/`](../../src/nexus_memory/layers/diary/) → [diary-layer.md](diary-layer.md) |
+| **V** | Diary *(optional)* | "What is the long-arc narrative across sessions?" | SQLite (only when enabled) | [`layers/diary/`](../../src/nexus_memory/layers/diary/) → [diary-layer.md](diary-layer.md) |
 
 All four core layers share **one SQLite connection** and a single re-entrant
 write lock (`NexusDB.lock`); Layer I is the exception — it lives only in RAM and
@@ -141,9 +142,12 @@ turn-count sentence, so the summary is **always non-empty for non-empty input**.
 An LLM-backed summarizer can be injected via `NexusMemory(summarizer=...)` for a
 fluent narrative diary.
 
-> The hierarchical, multi-day diary narrative (rolling daily → persistent
-> sections, driven by an LLM-agnostic outbox) is a **separate optional layer**
-> (Layer V). It is documented in [The Diary Layer](diary-layer.md), not here.
+> The hierarchical, cross-session diary narrative (a rolling per-session entry
+> folded into one growing persistent summary, driven by an LLM-agnostic outbox)
+> is a **separate optional layer** (Layer V). The current session's entry is
+> always injected, plus up to `inject_sessions` previous ones and the single
+> `<persistent_summary>`. It is documented in
+> [The Diary Layer](diary-layer.md), not here.
 
 ---
 
@@ -391,7 +395,7 @@ read-only view over storage the two layers already own.
 
 A single ingest detects a standing request (Layer IV), logs the verbatim turns
 (Layer II), and mines a semantic fact (Layer III); a later assemble surfaces the
-directive for system-prompt injection while the diary summarizes the day.
+directive for system-prompt injection while the diary summarizes the session.
 
 ```python
 from nexus_memory import NexusMemory
