@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
-from nexus_memory import DiaryConfig, NexusMemory
+from nexus_memory import NexusConfig, NexusMemory
 
 if TYPE_CHECKING:  # type-only; no runtime coupling to the LLM module
     from .llm import LLMClient
@@ -73,6 +73,18 @@ def _render_job_input(prior_summary: str | None, items: list[dict]) -> str:
     return "There is no diary entry yet. Write the first one from these turns:\n" + new_block
 
 
+def _to_diary_job(j: dict) -> "DiaryJob":
+    """Wrap a raw Nexus handoff job dict in the demo's value object."""
+    return DiaryJob(
+        job_id=j["job_id"],
+        kind=j["kind"],
+        period=j.get("period"),
+        prompt=j["prompt"],
+        prior_summary=j.get("prior_summary"),
+        items=list(j.get("input", [])),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # the facade
 # --------------------------------------------------------------------------- #
@@ -102,10 +114,20 @@ class MemoryService:
         (Nexus owns the prompt; the host just runs it). It is *not* used for any
         demo-side summarization — the demo demonstrates Nexus as-is, so the only
         narrative is the one Nexus's diary produces. ``diary=True`` activates the
-        optional Layer V diary via its own ``DiaryConfig``.
+        optional Layer V diary — the module normalizes the bool to its own
+        ``DiaryConfig(enabled=True)`` (the 0.3.1 shorthand).
         """
-        diary_cfg = DiaryConfig(enabled=True) if diary else None
-        memory = NexusMemory(db_path=db_path, diary=diary_cfg)
+        # Nexus owns the conversation history and trims it by TOKENS. The host
+        # passes its real tokenizer + budget to history(); `history_max_turns`
+        # below is NOT the limit — it is only the candidate pool (how many recent
+        # turns Nexus fetches before token-trimming), set large enough that a big
+        # token budget can actually be filled.
+        config = NexusConfig(
+            history_truncation="tokens",     # bound history by tokens, not turn count
+            history_token_budget=50_000,     # default token window (host may override)
+            history_max_turns=10_000,        # candidate pool only — not the conversation limit
+        )
+        memory = NexusMemory(db_path=db_path, config=config, diary=diary)
         return cls(memory, diary, aux_llm)
 
     # --- core loop: retrieve / write -------------------------------------- #
@@ -128,6 +150,24 @@ class MemoryService:
                 "interaction": {"query": user_text, "response": assistant_text},
             }
         )
+
+    def history(
+        self,
+        *,
+        max_tokens: int | None = None,
+        token_counter: "Callable[[str], int] | None" = None,
+    ) -> list[dict]:
+        """The durable conversation as ``[{role, content, timestamp}]`` (chronological).
+
+        Nexus owns the history — this reads the (durable) episodic store, so it
+        survives a restart, and Nexus trims it. Pass ``max_tokens`` + a real
+        ``token_counter`` (e.g. tiktoken) to bound it by *tokens*; omit them to use
+        the configured token budget with Nexus's built-in heuristic counter.
+        """
+        res = self._m.history(
+            as_format="turns", max_tokens=max_tokens, token_counter=token_counter
+        )
+        return res if isinstance(res, list) else []
 
     def flush(self) -> None:
         """Block until async writers + consolidators finish (deterministic state)."""
@@ -189,17 +229,7 @@ class MemoryService:
         jobs = self._m.pending_summaries()
         if not isinstance(jobs, list):  # error dict -> layer not enabled
             return []
-        return [
-            DiaryJob(
-                job_id=j["job_id"],
-                kind=j["kind"],
-                period=j.get("period"),
-                prompt=j["prompt"],
-                prior_summary=j.get("prior_summary"),
-                items=list(j.get("input", [])),
-            )
-            for j in jobs
-        ]
+        return [_to_diary_job(j) for j in jobs]
 
     def apply_diary_summary(self, job_id: str, text: str) -> dict:
         """Hand a finished summary back to the module (folds into the pyramid)."""
@@ -210,14 +240,16 @@ class MemoryService:
         run_job: "Callable[[str, str], str] | None" = None,
         on_error: "Callable[[DiaryJob, Exception], None] | None" = None,
     ) -> int:
-        """Drain the Layer V outbox: run each pending job on the host model.
+        """Drain the Layer V outbox via the module's ``drain_diary`` helper.
 
-        Nexus never calls an LLM itself — it only *enqueues* summarization jobs.
-        This is the host's half of that provider-agnostic handoff: pull the pending
-        jobs, run each one's prompt on ``run_job`` (``prompt, input -> text``), and
-        fold the result back via :meth:`apply_diary_summary`. ``run_job`` defaults
-        to the configured **aux model** (``aux_llm.complete``); pass one explicitly
-        to override (e.g. a deterministic offline stub). Best-effort — a single job
+        Nexus owns the loop now (the 0.3.1 ``NexusMemory.drain_diary``): it pulls
+        each pending job, runs the host callable on it, and folds every non-empty
+        result back via ``submit_summary``. Nexus still never calls an LLM itself —
+        this facade supplies that callable: it renders the job's prior summary +
+        new turns into one user message (see :func:`_render_job_input`) and runs it
+        on the host model ``run_job`` (``prompt, input -> text``), which defaults to
+        the configured **aux model** (``aux_llm.complete``). Pass one explicitly to
+        override (e.g. a deterministic offline stub). Best-effort — a single job
         failure is reported via ``on_error`` (if given) and skipped. Returns the
         number of jobs applied.
         """
@@ -225,18 +257,20 @@ class MemoryService:
             if self._aux is None:
                 return 0  # no secondary model configured -> nothing to run
             run_job = self._aux.complete
-        applied = 0
-        for job in self.pending_diary_jobs():
+
+        def _run(job: dict) -> str:
+            """Adapt one raw Nexus handoff job to the host ``(prompt, input)`` call."""
             try:
-                text = run_job(job.prompt, _render_job_input(job.prior_summary, job.items))
+                return run_job(
+                    job["prompt"],
+                    _render_job_input(job.get("prior_summary"), list(job.get("input", []))),
+                )
             except Exception as exc:  # noqa: BLE001 - never break the caller
                 if on_error is not None:
-                    on_error(job, exc)
-                continue
-            if text:
-                self.apply_diary_summary(job.job_id, text)
-                applied += 1
-        return applied
+                    on_error(_to_diary_job(job), exc)
+                return ""  # empty -> the module skips this job
+
+        return self._m.drain_diary(_run)
 
     def diary_state(self) -> dict | None:
         """``{days, sections}`` for the pyramid view, or ``None`` when off."""

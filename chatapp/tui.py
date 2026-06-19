@@ -29,7 +29,7 @@ from textual.widgets import Header, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
 from . import commands, trace
-from .app import build_messages
+from .app import build_messages, _now_floor
 from .config import Settings
 from .llm import OpenRouterLLM
 from .memory import MemoryService
@@ -101,7 +101,9 @@ class NexusTUI(App):
         self.settings = settings
         self.llm = llm
         self.memory = memory
-        self.history: list[dict] = []
+        # Nexus owns the durable history; only a session "floor" is kept locally
+        # so /clear can hide earlier turns without deleting long-term memory.
+        self.history_floor: str | None = None
         self.last_trace: list[tuple[str, str, str]] = []
         self._palette_names: list[str] = []
         self.counter = TokenCounter(settings.model)
@@ -140,7 +142,7 @@ class NexusTUI(App):
     # ------------------------------------------------------------------ #
     def clear_screen(self) -> None:
         self.chat.clear()
-        self.history.clear()
+        self.history_floor = _now_floor()  # hide earlier turns; memory persists
 
     def set_token_budget(self, n: int) -> None:
         self.token_budget = n
@@ -226,8 +228,8 @@ class NexusTUI(App):
         trace.handler().drain()  # isolate this turn's internals
         recall = self.memory.recall(user_text)
         messages, self.last_tokens = build_messages(
-            recall.directives, recall.context_xml, self.history, user_text,
-            self.counter, self.token_budget,
+            self.memory, recall, user_text,
+            self.counter, self.token_budget, self.history_floor,
         )
         self.call_from_thread(self._refresh_status)  # show the finished input's token size
 
@@ -245,9 +247,8 @@ class NexusTUI(App):
 
         self.call_from_thread(self._finish_answer, answer)
 
-        # durable writes happen off the UI thread
-        self.history.append({"role": "user", "content": user_text})
-        self.history.append({"role": "assistant", "content": answer})
+        # durable writes happen off the UI thread — Nexus stores the turn, so the
+        # next turn's history() includes it (no app-side history kept).
         self.memory.remember(user_text, answer)
         self.memory.flush()
         self.last_trace = trace.handler().drain()

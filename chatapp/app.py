@@ -13,6 +13,7 @@ UI: it and the TUI share the exact same MemoryService, commands, and renderables
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 
 from rich.console import Console
 from rich.panel import Panel
@@ -52,51 +53,68 @@ def _banner(model: str, aux_model: str, db_path: str, count, diary_on: bool) -> 
     )
 
 
-def build_system_prompt(directives: list[str]) -> str:
-    """Compose the system prompt, injecting active procedural directives (Layer IV)."""
-    if not directives:
-        return SYSTEM_PROMPT
-    rules = "\n".join(f"- {d}" for d in directives)
-    return (
-        f"{SYSTEM_PROMPT}\n\n"
-        "Standing behavioral directives (always follow these):\n"
-        f"{rules}"
-    )
+def _now_floor() -> str:
+    """UTC ``YYYY-MM-DD HH:MM:SS`` — matches Nexus turn timestamps (for /clear)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def build_system_prompt(directives: list[str], facts: list[dict]) -> str:
+    """Compose the system prompt from the base prompt + Nexus directives + facts.
+
+    Directives (Layer IV — behavior) and recalled facts (Layer III — knowledge)
+    are what the model should *obey/know*, so they belong in the system prompt.
+    The conversation itself rides as native chat messages (see build_messages),
+    so we deliberately do NOT inject ``<recent_dialogue>`` here — that would
+    duplicate the message history.
+    """
+    parts = [SYSTEM_PROMPT]
+    if directives:
+        rules = "\n".join(f"- {d}" for d in directives)
+        parts.append("Standing behavioral directives (always follow these):\n" + rules)
+    if facts:
+        known = "\n".join(f"- {f.get('content', '')}" for f in facts)
+        parts.append("Known facts about the user:\n" + known)
+    return "\n\n".join(parts)
 
 
 def build_messages(
-    system_directives: list[str],
-    context_xml: str,
-    history: list[dict],
+    memory: "MemoryService",
+    recall: "Recall",
     user_text: str,
     counter: "TokenCounter",
     budget: int,
+    floor: str | None = None,
 ) -> tuple[list[dict], int]:
     """Assemble the message list for one turn, bounded by a TOKEN window.
 
-    The history is **not** capped by message count — only by the token budget:
-    the fixed parts (system prompt + memory context + the current user message)
-    are always included, then prior turns are added newest-first until adding the
-    next one would exceed ``budget``. Returns ``(messages, total_tokens)`` where
-    ``total_tokens`` is the count of the *finished* input sent to the provider.
+    Nexus owns the conversation: ``memory.history()`` returns the durable turns,
+    **token-trimmed by Nexus using the host's real tokenizer** (``counter``). The
+    directives + recalled facts go into the system prompt; the trimmed turns ride
+    as native chat messages (no ``<recent_dialogue>`` duplication). ``budget`` is
+    the whole-prompt token window; the fixed parts (system + current user) are
+    reserved, the remainder funds the history. ``floor`` (set by /clear) hides
+    turns at/older than that timestamp. Returns ``(messages, total_tokens)``.
     """
-    head = [
-        {"role": "system", "content": build_system_prompt(system_directives)},
-        {"role": "system", "content": f"Long-term memory:\n{context_xml}"},
+    system_content = build_system_prompt(recall.directives, recall.facts)
+    reserve = counter.count_messages(
+        [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_text},
+        ]
+    )
+    hist_budget = max(0, budget - reserve)
+
+    # Nexus trims the history to the token budget (real tokenizer passed in).
+    turns = memory.history(max_tokens=hist_budget, token_counter=counter.count_text)
+    if floor:
+        turns = [t for t in turns if t.get("timestamp", "") > floor]
+    history = [{"role": t["role"], "content": t["content"]} for t in turns]
+
+    messages = [
+        {"role": "system", "content": system_content},
+        *history,
+        {"role": "user", "content": user_text},
     ]
-    tail = [{"role": "user", "content": user_text}]
-
-    used = counter.count_messages(head + tail)
-    chosen: list[dict] = []
-    for msg in reversed(history):  # newest-first
-        cost = counter.count_message(msg)
-        if used + cost > budget:
-            break
-        chosen.append(msg)
-        used += cost
-    chosen.reverse()
-
-    messages = head + chosen + tail
     return messages, counter.count_messages(messages)
 
 
@@ -107,7 +125,10 @@ class ChatApp:
         self.settings = settings
         self.llm = llm
         self.memory = memory
-        self.history: list[dict] = []
+        # Nexus owns the conversation history (durable). The host keeps only an
+        # optional session "floor" timestamp so /clear can hide earlier turns
+        # from the prompt without deleting long-term memory.
+        self.history_floor: str | None = None
         self.last_trace: list[tuple[str, str, str]] = []
         self.counter = TokenCounter(settings.model)
         self.token_budget = settings.token_window
@@ -115,7 +136,9 @@ class ChatApp:
 
     # --- ctx interface used by commands.dispatch ------------------------- #
     def clear_screen(self) -> None:
-        self.history.clear()
+        # Nexus owns the durable history; "clear" just sets a session floor so
+        # earlier turns are excluded from the prompt (long-term memory is kept).
+        self.history_floor = _now_floor()
 
     def set_token_budget(self, n: int) -> None:
         self.token_budget = n
@@ -160,8 +183,8 @@ class ChatApp:
         trace.handler().drain()  # isolate this turn
         recall = self.memory.recall(user_text)
         messages, self.last_tokens = build_messages(
-            recall.directives, recall.context_xml, self.history, user_text,
-            self.counter, self.token_budget,
+            self.memory, recall, user_text,
+            self.counter, self.token_budget, self.history_floor,
         )
         _info(f"[dim]· {self.last_tokens}/{self.token_budget} tokens in context[/]")
 
@@ -176,8 +199,7 @@ class ChatApp:
             return
         console.print()
 
-        self.history.append({"role": "user", "content": user_text})
-        self.history.append({"role": "assistant", "content": answer})
+        # Persist the exchange — Nexus stores it, so next turn's history() has it.
         self.memory.remember(user_text, answer)
         self.memory.flush()
         self.last_trace = trace.handler().drain()
