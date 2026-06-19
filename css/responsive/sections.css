@@ -1,0 +1,236 @@
+/* =========================================================================
+   Nexus Memory — responsive layer · SECTIONS (per-section layout)
+   Loaded AFTER style.css. Mobile-only (max-width @media); desktop unchanged.
+   Builds ON TOP of style.css's existing 900/760/560 breakpoints (nav →
+   hamburger, hero/arch/showcase grids → 1 col, etc.) — never contradicts them.
+   ========================================================================= */
+
+/* ------------------------------------------------------------------ nav --- */
+/* once style.css flips .nav-inner from grid to flex (≤900px) the CTA loses its
+   justify-self:end — push the CTA group (Get-started + hamburger) back to the
+   right edge across the whole hamburger range. */
+@media (max-width: 900px) {
+  .nav-cta { margin-left: auto; }
+}
+@media (max-width: 768px) {
+  .nav-inner { padding: 12px clamp(14px, 4vw, 24px); gap: 12px; }
+  .nav-links { inset: 60px 12px auto 12px; }
+  .brand { gap: 9px; }
+  .brand small { font-size: 11px; }
+}
+@media (max-width: 480px) {
+  .nav-inner { padding: 10px 14px; gap: 10px; }
+  .nav-links { inset: 56px 10px auto 10px; }
+  .brand-mark { width: 36px; height: 36px; }
+  .brand-mark svg { width: 34px; height: 34px; }
+  .brand small { display: none; }
+  .brand { font-size: 15px; }
+  .nav-toggle { width: 38px; height: 36px; }
+}
+
+/* ----------------------------------------------------------------- hero --- */
+@media (max-width: 768px) {
+  .hero { padding-top: 40px; }
+  .hero-grid { gap: 32px; }
+  .hero-name {
+    font-size: clamp(26px, 8.5vw, 64px);
+    letter-spacing: 1px;
+    margin-bottom: 28px;
+  }
+  .hero h1 { font-size: clamp(32px, 8vw, 52px); letter-spacing: -1px; margin-bottom: 16px; }
+  .hero p.sub { font-size: 16px; margin-bottom: 22px; }
+  .tagpill { margin-bottom: 16px; }
+  .badges { gap: 7px; margin-bottom: 22px; }
+}
+@media (max-width: 480px) {
+  .hero { padding-top: 28px; }
+  .hero-name {
+    font-size: clamp(20px, 7.6vw, 30px);
+    letter-spacing: 0.5px;
+    margin-bottom: 22px;
+  }
+  .hero h1 { font-size: clamp(27px, 8.5vw, 36px); }
+  .hero p.sub { font-size: 15px; }
+  .hero .btns { flex-direction: column; align-items: stretch; }
+  .hero .btns .btn { justify-content: center; width: 100%; }
+}
+
+/* ------------------------------------------------------ hero code demo --- */
+@media (max-width: 768px) {
+  /* tabs: tighten for phones (already wrap on desktop via flex-wrap) */
+  .demo-tabs { gap: 6px; margin-bottom: 14px; }
+  .demo-tab { font-size: 12px; padding: 8px 12px; }
+  /* let the in-window Code/Output toggle + Run group form a clean second row
+     instead of being pinned far-right by margin-left:auto, once .code-bar wraps */
+  .code-views { margin-left: 0; }
+  .demo-run { margin-left: 8px; }
+}
+@media (max-width: 480px) {
+  .demo-tabs { gap: 5px; }
+  .demo-tab { font-size: 11.5px; padding: 7px 11px; }
+  /* slightly larger touch targets for the in-window controls */
+  .view-tab { padding: 5px 10px; font-size: 11px; }
+  .demo-run { padding: 5px 11px; }
+}
+
+/* ----------------------------------------------------------- quickstart --- */
+@media (max-width: 768px) {
+  /* process() actions: collapse the minmax(232px,1fr) auto-fill grid to 1 col */
+  #install .actions-grid { grid-template-columns: 1fr; }
+  /* tighten the gap between wrapped tab buttons */
+  #install .tabset .demo-tabs { gap: 6px; }
+}
+@media (max-width: 480px) {
+  #install .tabset .demo-tab { padding: 8px 12px; font-size: 12px; }
+  #install .action { padding: 12px 14px; }
+  #install .action .lv { top: 10px; right: 10px; }
+}
+
+/* ------------------------------------------------------- features cards --- */
+@media (max-width: 768px) {
+  /* turn the bleeding, masked, two-row marquee into a calm single-column stack
+     (the auto-scroll + duplicate row + clones are dropped in mobile-lite.css) */
+  .marquee {
+    margin-inline: 0;
+    padding: 0;
+    overflow: visible;
+    gap: 12px;
+    -webkit-mask-image: none;
+            mask-image: none;
+  }
+  .marquee-track {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    padding: 0;
+  }
+  .card { width: 100%; cursor: default; }
+  .card-head h3 { font-size: 15.5px; }
+  .card p { font-size: 14px; }
+}
+@media (max-width: 480px) {
+  .card { padding: 14px 15px; }
+  .card-ico { width: 30px; height: 30px; font-size: 15px; }
+}
+
+/* --------------------------------------------------------- architecture --- */
+@media (max-width: 768px) {
+  .layer { grid-template-columns: 46px 1fr; gap: 13px; padding: 14px 15px; border-radius: 12px; }
+  .layer-num { font-size: 19px; }
+  .layer-num small { font-size: 9px; letter-spacing: .5px; margin-top: 3px; }
+  .layer h4 { font-size: 15px; }
+  .transfer { padding: 20px; }
+  .transfer h3 { font-size: 17px; }
+  .xfer { gap: 11px; padding: 12px 0; }
+  .xfer .n { width: 22px; }
+}
+@media (max-width: 480px) {
+  .layers { gap: 10px; }
+  .layer { grid-template-columns: 40px 1fr; gap: 11px; padding: 13px 13px; }
+  .layer-num { font-size: 17px; }
+  .layer p { font-size: 13px; }
+  .transfer { padding: 17px; }
+}
+
+/* ------------------------------------------------------------- showcase --- */
+@media (max-width: 768px) {
+  /* tighten panel chrome so content gets more of the narrow viewport */
+  .panel { padding: 20px 16px; }
+  .panel .sub { margin-bottom: 18px; }
+  /* widen the pyramid tiers so coarse epochs stay readable when stacked;
+     keep a subtle taper (full / 90% / 80%) instead of the desktop 100/76/52 */
+  .pyramid { gap: 8px; }
+  .tier { padding: 12px 14px; }
+  .tier.l1 { width: 90%; }
+  .tier.l2 { width: 80%; }
+  /* guard long flow-step token text from ever forcing overflow */
+  .flow-step { grid-template-columns: 28px 1fr; gap: 12px; }
+  .flow-step > div:last-child { min-width: 0; }
+}
+@media (max-width: 480px) {
+  .panel { padding: 16px 13px; }
+  .panel h3 { font-size: 17px; }
+  /* on the smallest phones the taper costs legibility — go full width */
+  .tier.l1, .tier.l2 { width: 100%; }
+  .tier .t-meta { font-size: 12px; }
+  .flow-step p { font-size: 13px; }
+}
+
+/* ------------------------------------------------------------ i/o figure -- */
+@media (max-width: 768px) {
+  .io-legend { gap: 10px 18px; font-size: 12px; }
+}
+@media (max-width: 480px) {
+  .io-fig { padding: 14px; }
+  .io-legend { gap: 8px 14px; font-size: 11.5px; margin-top: 12px; padding-top: 12px; }
+  .io-legend .sw { width: 18px; margin-right: 6px; }
+}
+
+/* --------------------------------------------------------- how it works --- */
+@media (max-width: 768px) {
+  /* keep stats as a compact 2×2 on phones instead of a tall single column */
+  .stats { grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 28px; }
+  .stat { padding: 16px 14px; }
+  .stat .big { font-size: 26px; }
+  /* let each formula scroll-x and scale the math down so it never blows out the page */
+  .formula { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .formula .f { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .formula .f math { font-size: 1.25em; }
+  .formula-grid .formula .f math { font-size: 1.1em; }
+}
+@media (max-width: 480px) {
+  /* re-assert 2×2 to override the existing 560px single-column .stats rule */
+  .stats { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { padding: 14px 12px; }
+  .stat .big { font-size: 23px; }
+  .stat .lbl { font-size: 12px; }
+  .tech-item { font-size: 13.5px; }
+  .formula { padding: 16px 14px; }
+  .formula-grid .formula { padding: 14px 12px; }
+  .formula .f math { font-size: 1.1em; }
+  .formula-grid .formula .f math { font-size: 1em; }
+  .formula .cap { font-size: 12px; }
+}
+
+/* ------------------------------------------------------------------ faq --- */
+@media (max-width: 768px) {
+  .faq-list { gap: 10px; }
+  .faq-item { border-radius: 12px; }
+  .faq-item summary { padding: 15px 16px; gap: 12px; font-size: 15px; }
+  .faq-item .a { padding: 0 16px 16px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+  .q-ico { width: 14px; height: 14px; }
+  .q-ico::before { width: 12px; }
+  .q-ico::after { height: 12px; }
+}
+@media (max-width: 480px) {
+  .faq-item summary { padding: 13px 14px; gap: 10px; font-size: 14.5px; }
+  .faq-item .a { padding: 0 14px 14px; font-size: 13.5px; }
+}
+
+/* ------------------------------------------------------------------ cta --- */
+@media (max-width: 768px) {
+  .cta-box { padding: 40px 22px; border-radius: 18px; }
+  .cta-box p { font-size: 15.5px; margin-bottom: 24px; }
+}
+@media (max-width: 480px) {
+  .cta-box { padding: 30px 16px; border-radius: 16px; }
+  .cta-box h2 { font-size: 24px; letter-spacing: -0.4px; }
+  .cta-box p { font-size: 15px; max-width: none; }
+  .cta-box .btns { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; }
+  .cta-box .btns .btn { width: 100%; justify-content: center; }
+}
+
+/* --------------------------------------------------------------- footer --- */
+@media (max-width: 768px) {
+  .footer { padding: 32px 0; margin-top: 32px; }
+  .footer-inner {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 22px;
+  }
+  .footer-links { flex-direction: column; gap: 12px; }
+  .footer .note { width: 100%; text-align: left; margin-top: 0; }
+}

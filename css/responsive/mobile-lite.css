@@ -1,0 +1,40 @@
+/* =========================================================================
+   Nexus Memory — responsive layer · MOBILE-LITE (performance shedding)
+   Loaded LAST. Drops / de-animates the heavy, purely-decorative pieces on
+   phones so they are neither painted nor kept alive there. Desktop untouched:
+   every rule is inside a max-width @media. This is the "don't keep heavy
+   elements loaded on mobile" layer.
+   ========================================================================= */
+
+@media (max-width: 768px) {
+  /* --- background: kill the expensive animated/blurred layers ---
+     3 × blur(70px) float-animated orbs + the cursor-tracked, full-viewport
+     repainting grid spot are pure compositing cost and useless on touch.
+     Keep only the cheap, non-animated grid as a faint texture. */
+  .orb,
+  .bg-grid-spot { display: none; animation: none; }
+  .bg-grid { opacity: 0.32; }
+
+  /* --- hero wordmark: keep the gradient look, stop the two infinite
+     animations (mirrors the existing prefers-reduced-motion fallback) --- */
+  .hero-name {
+    animation: none;
+    background-position: 50% 50%;
+    will-change: auto;
+  }
+
+  /* --- features: stop the infinite scroll and shed the duplicate row +
+     the JS-cloned cards, leaving the 6 unique cards stacked once --- */
+  .marquee-track { animation: none; }
+  .marquee-track.reverse { display: none; }
+  .marquee-track > [aria-hidden="true"] { display: none; }
+  .card:hover { transform: none; }
+
+  /* --- architecture: drop the per-card slide on touch --- */
+  .layer { transition: none; }
+  .layer:hover { transform: none; background: var(--surface); }
+
+  /* --- modal: drop the animated pulsing grid + costly backdrop blur --- */
+  .modal-backdrop::before { display: none; }
+  .modal-backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

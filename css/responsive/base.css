@@ -1,0 +1,59 @@
+/* =========================================================================
+   Nexus Memory — responsive layer · BASE (tokens + shared components)
+   Loaded AFTER style.css. Every rule lives inside a max-width @media, so the
+   desktop rendering is byte-for-byte unchanged — this only adapts phones.
+   Breakpoints: 768px (phones/small tablets) · 480px (small phones).
+   Pairs with: sections.css (per-section layout) · mobile-lite.css (perf).
+   ========================================================================= */
+
+/* ---------------------------------------------- type & spacing scale ------ */
+@media (max-width: 768px) {
+  .section { padding: 80px 0; }
+  .container { padding: 0 18px; }
+  .section-head { margin-bottom: 32px; }
+  .h2 { font-size: clamp(22px, 5vw, 26px); }
+  .lead { font-size: 15.5px; }
+  .eyebrow { letter-spacing: 1.6px; margin-bottom: 12px; }
+}
+@media (max-width: 480px) {
+  .container { padding: 0 16px; }
+  .section-head { margin-bottom: 26px; }
+  .h2 { font-size: clamp(20px, 6vw, 24px); }
+  .lead { font-size: 15px; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 1.4px; }
+}
+
+/* ---------------------------------- shared: buttons · code · modal -------- */
+@media (max-width: 768px) {
+  /* code window: tighter frame + smaller mono so more code fits before scroll */
+  .code-bar { padding: 9px 11px; gap: 7px; }
+  .code-bar .file { margin-left: 6px; font-size: 11.5px; }
+  .code-bar .copy { font-size: 11px; padding: 4px 9px; }
+  .code pre { padding: 14px 13px 16px; }
+  .code code { font-size: 12px; line-height: 1.6; }
+  .term-out { padding: 14px 13px 16px; font-size: 11.5px; max-height: 320px; }
+
+  /* shared buttons: comfortable tap height, slightly tighter row */
+  .btns { gap: 10px; }
+  .btn { min-height: 44px; padding: 11px 16px; }
+  .btn-sm { min-height: 38px; }
+
+  /* modal fits small screens: less backdrop inset + dialog padding */
+  .modal-backdrop { padding: 16px; }
+  .modal-dialog { padding: 22px 20px 24px; border-radius: var(--radius-sm); }
+}
+@media (max-width: 480px) {
+  /* full-width stacked buttons make easy tap targets on the smallest phones */
+  .btns { gap: 9px; }
+  .btns .btn { flex: 1 1 100%; justify-content: center; }
+  .btn { font-size: 14px; }
+
+  /* squeeze a little more horizontal room out of the code window */
+  .code pre { padding: 12px 11px 14px; }
+  .code code { font-size: 11.5px; }
+  .term-out { padding: 12px 11px 14px; max-height: 260px; }
+
+  /* modal hugs the viewport edges on tiny screens */
+  .modal-backdrop { padding: 12px; }
+  .modal-dialog { padding: 20px 16px 22px; }
+}
