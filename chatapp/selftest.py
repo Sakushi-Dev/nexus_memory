@@ -49,11 +49,12 @@ def run_selftest() -> int:
             ("I'm building a local memory library called Nexus.", "Sounds great."),
             ("I prefer Python and I use Windows 11.", "Noted."),
             ("Sprich ab jetzt deutsch mit mir.", "Alles klar, ich antworte ab jetzt auf Deutsch."),
+            ("Ich arbeite am liebsten abends.", "Gut zu wissen — abends also."),
         ]
         for q, a in turns:
             memory.remember(q, a)
         memory.flush()
-        _show_trace("ingest fan-out across all 4 layers (4 interactions)")
+        _show_trace("ingest fan-out across all 4 layers (5 interactions)")
 
         # --- Layer III (semantic): recall against a related query ------------
         console.print("\n[bold]Query:[/] 'Where does the user live and what are they building?'")
