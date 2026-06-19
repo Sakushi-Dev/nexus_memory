@@ -38,7 +38,7 @@ class DiaryJob:
 
     job_id: str
     kind: str
-    period: str | None
+    session: str | None
     prompt: str
     prior_summary: str | None
     items: list[dict]
@@ -54,9 +54,9 @@ def _render_job_input(prior_summary: str | None, items: list[dict]) -> str:
     """
     new_material: list[str] = []
     for it in items:
-        # daily jobs carry {role, content}; section jobs carry {period, summary}.
+        # session jobs carry {role, content}; fold jobs carry {seq, summary}.
         if "summary" in it:
-            new_material.append(f"[{it.get('period', '?')}] {it.get('summary', '')}")
+            new_material.append(f"[session {it.get('seq', '?')}] {it.get('summary', '')}")
         else:
             new_material.append(f"{it.get('role', '?')}: {it.get('content', '')}")
     new_block = "\n".join(new_material)
@@ -78,7 +78,7 @@ def _to_diary_job(j: dict) -> "DiaryJob":
     return DiaryJob(
         job_id=j["job_id"],
         kind=j["kind"],
-        period=j.get("period"),
+        session=j.get("session"),
         prompt=j["prompt"],
         prior_summary=j.get("prior_summary"),
         items=list(j.get("input", [])),
@@ -204,24 +204,23 @@ class MemoryService:
         time_range = (f"{day} 00:00:00", f"{day} 23:59:59") if day else None
         return self._m.reconstruct(time_range=time_range)
 
-    def diary_day(self, day: str | None = None) -> dict | None:
-        """The Layer V daily-diary row for ``day`` (or the latest non-empty one).
+    def diary_current_session(self) -> dict | None:
+        """The Layer V diary row for the CURRENT session (highest ``seq``).
 
         Reads ONLY the diary layer's own narrative — there is no extractive
         fallback — so the demo shows exactly what Nexus produced: ``None`` when the
-        diary is off or the day has no entry yet.
+        diary is off or no session has an entry yet. Session-wise (0.4.0): the diary
+        is scoped to a run, not a calendar day, and is shown even before it is
+        finalized.
         """
         state = self.diary_state()
         if not state:
             return None
-        days = state.get("days", []) or []
-        if day is None:
-            with_summary = [d for d in days if d.get("summary")]
-            return with_summary[-1] if with_summary else None
-        for d in days:
-            if d.get("period") == day:
-                return d
-        return None
+        sessions = state.get("sessions", []) or []
+        if not sessions:
+            return None
+        # Highest seq = the current/newest session.
+        return max(sessions, key=lambda s: s.get("seq") or 0)
 
     # --- Layer V (optional) ---------------------------------------------- #
     def pending_diary_jobs(self) -> list[DiaryJob]:
@@ -273,7 +272,7 @@ class MemoryService:
         return self._m.drain_diary(_run)
 
     def diary_state(self) -> dict | None:
-        """``{days, sections}`` for the pyramid view, or ``None`` when off."""
+        """``{sessions, summary}`` for the pyramid view, or ``None`` when off."""
         res = self._m.inspect(type="diary")
         if not isinstance(res, dict) or res.get("status") != "success":
             return None

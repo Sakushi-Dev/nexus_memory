@@ -32,8 +32,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("/recall", "show recalled facts + directives for a query"),
     ("/memory", "list stored episodic memories"),
     ("/stats", "memory health (count, db size)"),
-    ("/diary", "Layer V diary entry for a day (default: latest)"),
-    ("/pyramid", "Layer V time-pyramid: daily diaries + sections + outbox"),
+    ("/diary", "Layer V diary for the current session"),
+    ("/pyramid", "Layer V pyramid: session diaries + persistent summary + outbox"),
     ("/transcript", "raw episodic transcript (default: today)"),
     ("/rules", "active procedural directives (Layer IV)"),
     ("/rule", "add a standing directive: /rule <text>"),
@@ -116,11 +116,11 @@ def build_stats(health: dict) -> RenderableType:
     return Panel(str(health), title="memory health", border_style="green", expand=False)
 
 
-def build_diary(row: dict | None, day_label: str) -> RenderableType:
-    """Render a Layer V daily-diary row (or 'nothing yet' — no fabricated fallback)."""
+def build_diary(row: dict | None, label: str) -> RenderableType:
+    """Render a Layer V session-diary row (or 'nothing yet' — no fabricated fallback)."""
     if not row or not row.get("summary"):
-        return Text(f"No diary entry yet for {day_label}.", style="dim")
-    period = row.get("period", day_label)
+        return Text(f"No diary entry yet for {label}.", style="dim")
+    seq = row.get("seq", "?")
     flags = []
     if row.get("finalized"):
         flags.append("finalized")
@@ -130,10 +130,10 @@ def build_diary(row: dict | None, day_label: str) -> RenderableType:
     body = Text()
     body.append(row.get("summary", ""), style="white")
     body.append(
-        f"\n\n({row.get('interaction_count', 0)} interaction(s) on {period}){suffix}",
+        f"\n\n({row.get('interaction_count', 0)} interaction(s) · session seq {seq}){suffix}",
         style="dim",
     )
-    return Panel(body, title=f"📖 diary · {period}", border_style="magenta", expand=False)
+    return Panel(body, title=f"📖 diary · session {seq}", border_style="magenta", expand=False)
 
 
 def build_pyramid(state: dict | None, pending: list) -> RenderableType:
@@ -142,44 +142,45 @@ def build_pyramid(state: dict | None, pending: list) -> RenderableType:
             "Layer V diary is not enabled. Start without --no-diary to activate it.",
             style="dim",
         )
-    days = state.get("days", []) or []
-    sections = state.get("sections", []) or []
+    sessions = state.get("sessions", []) or []
+    summary = state.get("summary") or None
 
     body = Text()
-    body.append("L1 · daily diaries (rolling, updated every N=3 interactions)\n", style="bold magenta")
-    if days:
-        for d in days:
+    body.append("L1 · session diaries (rolling, updated every N=5 interactions)\n", style="bold magenta")
+    if sessions:
+        for s in sessions:
             flags = []
-            if d.get("finalized"):
+            if s.get("finalized"):
                 flags.append("finalized")
-            if d.get("folded"):
+            if s.get("folded"):
                 flags.append("folded")
             flag_str = f" [{', '.join(flags)}]" if flags else ""
-            body.append(f"  • {d.get('period', '?')}{flag_str}\n", style="magenta")
-            body.append(f"      {d.get('summary', '') or '[pending summary]'}\n", style="white")
-    else:
-        body.append("  [no daily diaries yet]\n", style="dim")
-
-    body.append("\nL2 · persistent sections (ring of M=8 ≈ 56 days)\n", style="bold blue")
-    if sections:
-        for s in sections:
-            days_range = f"{s.get('first_day', '?')}..{s.get('last_day', '?')}"
-            frozen = " (frozen)" if s.get("frozen") else " (open)"
             body.append(
-                f"  • seq {s.get('seq', '?')} · {days_range} · "
-                f"{s.get('diary_count', 0)}/7{frozen}\n",
-                style="blue",
+                f"  • seq {s.get('seq', '?')} · {s.get('interaction_count', 0)} interaction(s){flag_str}\n",
+                style="magenta",
             )
-            body.append(f"      {s.get('summary', '') or '[pending]'}\n", style="white")
+            body.append(f"      {s.get('summary', '') or '[pending summary]'}\n", style="white")
     else:
-        body.append("  [no persistent sections yet]\n", style="dim")
+        body.append("  [no session diaries yet]\n", style="dim")
+
+    body.append("\nL2 · persistent summary (one growing entry, folds every 6 sessions)\n", style="bold blue")
+    if summary and summary.get("summary"):
+        first = (summary.get("first_session") or "?")[:8]
+        last = (summary.get("last_session") or "?")[:8]
+        body.append(
+            f"  • {summary.get('session_count', 0)} session(s) folded · {first}…→{last}…\n",
+            style="blue",
+        )
+        body.append(f"      {summary.get('summary', '')}\n", style="white")
+    else:
+        body.append("  [no persistent summary yet]\n", style="dim")
 
     body.append(f"\noutbox · {len(pending)} pending summarization job(s)\n", style="bold yellow")
     for j in pending:
-        period = getattr(j, "period", None) or getattr(j, "kind", "?")
-        body.append(f"  ▸ {getattr(j, 'kind', '?')} job for {period}\n", style="yellow")
+        target = getattr(j, "session", None) or "persistent summary"
+        body.append(f"  ▸ {getattr(j, 'kind', '?')} job for {target}\n", style="yellow")
 
-    return Panel(body, title="🪜 Layer V · diary time-pyramid", border_style="magenta", expand=False)
+    return Panel(body, title="🪜 Layer V · diary pyramid", border_style="magenta", expand=False)
 
 
 def build_rules(rules: list[dict]) -> RenderableType:
@@ -304,10 +305,7 @@ def _pyramid(ctx, arg: str) -> Outcome:
 def _diary(ctx, arg: str) -> Outcome:
     if not ctx.memory.diary_enabled:
         return Outcome(True, notice="Layer V diary is off (start without --no-diary) — nothing is summarized.")
-    day = arg or None
-    if day and day.startswith("[") and day.endswith("]"):
-        day = None
-    return Outcome(True, renderable=build_diary(ctx.memory.diary_day(day), day or "today"))
+    return Outcome(True, renderable=build_diary(ctx.memory.diary_current_session(), "the current session"))
 
 
 def _rule(ctx, arg: str) -> Outcome:

@@ -76,13 +76,13 @@ def run_selftest() -> int:
         console.print("\n[bold]Working buffer (volatile):[/]")
         console.print(commands.build_working(memory.working_rows()))
 
-        # --- Layer V (diary outbox): drain, then show the day narrative + pyramid ---
+        # --- Layer V (diary outbox): drain, then show the session narrative + pyramid ---
         folded = memory.drain_diary(_offline_job)
         console.print(f"\n[bold]Layer V diary — drained {folded} outbox job(s):[/]")
-        day = memory.diary_day(_today())
-        console.print(commands.build_diary(day, _today()))
+        sess = memory.diary_current_session()
+        console.print(commands.build_diary(sess, "the current session"))
         console.print(commands.build_pyramid(memory.diary_state(), memory.pending_diary_jobs()))
-        assert day and day.get("summary"), "expected a Layer V daily diary after draining"
+        assert sess and sess.get("summary"), "expected a Layer V session diary after draining"
 
         # --- Layer II (episodic): raw transcript reconstruction --------------
         console.print("\n[bold]Episodic transcript (reconstructed):[/]")
