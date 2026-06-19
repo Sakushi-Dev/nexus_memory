@@ -6,7 +6,7 @@ Layer I :class:`~nexus_memory.working.WorkingMemory`: where working memory keeps
 only the last N turns in RAM, the episodic store keeps the full history on disk
 so a past interaction can be reconstructed verbatim and a day can be summarized.
 
-Per the v2 multi-layer contract, this store does **not** own the connection
+Like the other layer stores, this store does **not** own the connection
 lifecycle — :class:`~nexus_memory.db.NexusDB` does. The store creates *its own*
 tables with ``CREATE TABLE IF NOT EXISTS`` on construction, using the shared
 connection (``db.conn``) and the shared write lock (``with db.lock:``). All

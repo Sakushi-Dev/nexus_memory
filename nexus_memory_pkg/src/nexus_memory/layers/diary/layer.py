@@ -1,4 +1,4 @@
-"""The diary layer assembly (CONTRACT-v3 §8) — the self-contained Layer V.
+"""The diary layer assembly — the self-contained Layer V.
 
 :class:`DiaryLayer` wires together the diary's own pieces (store, scheduler,
 consolidator, context provider) and exposes the surfaces the orchestrator plugs
@@ -62,7 +62,7 @@ class DiaryLayer:
         logger.debug("DiaryLayer constructed (diary layer active).")
 
     # ------------------------------------------------------------------ #
-    # action routing (CONTRACT-v3 §7)
+    # action routing
     # ------------------------------------------------------------------ #
     def parse_request(self, payload: dict):
         """Validate + return a layer model for ONLY the 2 diary actions.
@@ -104,7 +104,7 @@ class DiaryLayer:
         }
 
     # ------------------------------------------------------------------ #
-    # convenience wrappers (CONTRACT-v3 §7)
+    # convenience wrappers
     # ------------------------------------------------------------------ #
     def pending_summaries(self, limit: int | None = None) -> list[dict]:
         """Return the handoff job objects (the host drains these)."""

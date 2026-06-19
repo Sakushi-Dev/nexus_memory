@@ -1,4 +1,4 @@
-"""Nexus-owned prompt templates for the diary outbox (CONTRACT-v3 §9).
+"""Nexus-owned prompt templates for the diary outbox.
 
 These are shipped verbatim inside each summarization job's ``prompt`` field; the
 host forwards them to whatever model it likes. The module never calls a model
@@ -10,7 +10,9 @@ from __future__ import annotations
 DAILY_PROMPT = (
     "You maintain a concise third-person diary of a user's day. Given the prior "
     "entry and the new turns, produce an updated 2-5 sentence entry. Keep durable "
-    "facts, decisions, mood, and open threads; drop pleasantries."
+    "facts, decisions, mood, and open threads; drop pleasantries. When a new turn "
+    "corrects or contradicts the prior entry, treat the newer turn as "
+    "authoritative: revise the earlier wording rather than keeping both."
 )
 
 SECTION_PROMPT = (

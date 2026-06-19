@@ -49,7 +49,7 @@ class TransparencyInterface:
         self.db = db
         self.embedder = embedder
         self.config = config
-        # Optional v2 layer references, injected by the orchestrator after
+        # Optional layer references, injected by the orchestrator after
         # construction so inspect() can surface Layer I (working) and Layer IV
         # (procedural) state. They stay ``None`` when the interface is used
         # standalone (e.g. in semantic-only tests).

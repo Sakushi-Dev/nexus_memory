@@ -8,7 +8,7 @@ the rest of Nexus working exactly as before.
 
 The layer NEVER imports or calls any LLM SDK: when a summary is due it enqueues a
 job into the outbox; the host drains it, runs the prompt on any model, and hands
-the text back. See ``CONTRACT-v3-diary-outbox.md`` for the full binding spec.
+the text back. See ``docs/architecture/diary-layer.md`` for the design.
 
 """
 

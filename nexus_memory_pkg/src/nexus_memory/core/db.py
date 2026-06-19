@@ -37,24 +37,16 @@ def _utc_now_str() -> str:
 
 
 def _find_schema() -> Path:
-    """Locate ``schema.sql``.
+    """Locate the packaged ``schema.sql``.
 
-    Looks first next to this package (for installed/wheel layouts), then at the
-    repository root (``src`` layout, editable installs and source checkouts).
+    It ships as package data next to ``nexus_memory/__init__.py`` (see
+    ``[tool.setuptools.package-data]`` in ``pyproject.toml``), so the same path
+    resolves for source checkouts, editable installs, and built wheels.
     """
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parent / "schema.sql",              # packaged copy
-        here.parents[2] / "schema.sql",          # project root (src/nexus_memory/db.py -> root)
-        here.parents[1] / "schema.sql",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        "schema.sql could not be located. Searched: "
-        + ", ".join(str(c) for c in candidates)
-    )
+    schema = Path(__file__).resolve().parents[1] / "schema.sql"
+    if not schema.is_file():
+        raise FileNotFoundError(f"schema.sql could not be located at {schema}")
+    return schema
 
 
 class NexusDB:
@@ -65,7 +57,7 @@ class NexusDB:
         self._conn: sqlite3.Connection | None = None
         # Shared write lock for all layer stores (semantic + episodic +
         # procedural). Re-entrant so a method holding it may call another that
-        # also acquires it. Used by the v2 multi-layer stores via ``with db.lock:``.
+        # also acquires it. Used by the layer stores via ``with db.lock:``.
         self.lock: threading.RLock = threading.RLock()
         self.initialize()
 

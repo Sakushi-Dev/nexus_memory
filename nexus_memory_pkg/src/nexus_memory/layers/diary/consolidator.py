@@ -1,4 +1,4 @@
-"""The diary's ingest hook (CONTRACT-v3 §4.1, §8.2).
+"""The diary's ingest hook.
 
 :class:`DiaryConsolidator` plugs into the writer's ``consolidators`` list. It runs
 on the writer's background thread AFTER the

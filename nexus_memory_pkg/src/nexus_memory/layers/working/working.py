@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from ...core.db import _utc_now_str
+from ...core.xml_format import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,12 @@ class WorkingMemory:
             return [t.to_dict() for t in self._turns]
 
     def token_estimate(self) -> int:
-        """Rough token count of buffered content (~ ``sum(len)//4``)."""
+        """Rough token count of buffered content via the shared
+        :func:`~nexus_memory.core.xml_format.estimate_tokens` heuristic
+        (``len(s)//4``), so it matches ``history()``/``tokens()``."""
         with self._lock:
-            total = sum(len(t.content) for t in self._turns)
-        return total // 4
+            joined = "".join(t.content for t in self._turns)
+        return estimate_tokens(joined)
 
     def clear(self) -> None:
         """Drop all buffered turns."""

@@ -84,7 +84,7 @@ _FILLER_SENTENCES = frozenset(
 
 # Minimum number of word tokens for a sentence to be considered informative.
 _MIN_TOKENS = 3
-# Importance is clamped to the contract's 1..10 range.
+# Importance is clamped to the 1..10 range.
 _MIN_IMPORTANCE = 1
 _MAX_IMPORTANCE = 10
 _BASE_IMPORTANCE = 4
@@ -140,8 +140,8 @@ class MockFactExtractor(FactExtractor):
                     )
                 )
 
-        # Validate the batch through the Pydantic container. This is the
-        # contract's guarantee: extraction always yields JSON-valid facts.
+        # Validate the batch through the Pydantic container. This guarantees
+        # extraction always yields JSON-valid facts.
         extracted = ExtractedFacts(facts=candidates)
         result = [item.model_dump() for item in extracted.facts]
         logger.debug(
@@ -185,7 +185,7 @@ class MockFactExtractor(FactExtractor):
 
     @staticmethod
     def _clamp(value: int) -> int:
-        """Clamp ``value`` into the contract's ``[1, 10]`` importance range."""
+        """Clamp ``value`` into the ``[1, 10]`` importance range."""
         return max(_MIN_IMPORTANCE, min(_MAX_IMPORTANCE, int(value)))
 
 

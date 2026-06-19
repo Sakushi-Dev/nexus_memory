@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # type-only; never costs an import when the diary is unused
     from ..layers.diary.config import DiaryConfig
@@ -42,6 +42,7 @@ from ..layers.procedural.procedural import DirectiveDetector, MockDirectiveDetec
 from ..layers.semantic.reader import MemoryReader
 from ..layers.episodic.summarization import MockSummarizer, Summarizer
 from .transparency import TransparencyInterface
+from .xml_format import estimate_tokens, resolve_counter
 from ..layers.working.working import WorkingMemory
 from ..layers.semantic.writer import MemoryWriter
 
@@ -88,6 +89,11 @@ class NexusMemory:
         Optional :class:`~nexus_memory.procedural.DirectiveDetector` used to mine
         standing behavioral rules from interactions. Defaults to the offline,
         deterministic :class:`~nexus_memory.procedural.MockDirectiveDetector`.
+    diary:
+        Opt-in switch for the optional Layer V (hierarchical diary). Pass
+        ``diary=True`` for the defaults, or a
+        :class:`~nexus_memory.layers.diary.config.DiaryConfig` for custom knobs.
+        ``None``/``False`` (the default) leaves the layer off and unconstructed.
     """
 
     def __init__(
@@ -99,7 +105,7 @@ class NexusMemory:
         extractor: FactExtractor | None = None,
         summarizer: Summarizer | None = None,
         detector: DirectiveDetector | None = None,
-        diary: "DiaryConfig | None" = None,
+        diary: "DiaryConfig | bool | None" = None,
     ) -> None:
         # Build/override the config so db_path always reflects the argument.
         if config is None:
@@ -123,7 +129,7 @@ class NexusMemory:
         # Per-instance session id, used to tag episodic turns for this run.
         self.session_id: str = str(uuid.uuid4())
 
-        # Cognitive layers (v2 multi-layer architecture).
+        # Cognitive layers.
         #   I.   Working memory (volatile, RAM).
         #   II.  Episodic store (durable dialogue + diary).
         #   IV.  Procedural store (standing behavioral rules).
@@ -148,15 +154,19 @@ class NexusMemory:
             ProceduralConsolidator(self.procedural),
         ]
 
-        # Optional Layer V (diary). Built ONLY when an enabled DiaryConfig is
-        # passed; otherwise self._diary stays None and nothing is constructed
-        # (no tables, no provider, no routing) — byte-identical legacy behavior.
-        # The import is local so the diary package is never loaded when unused.
+        # Optional Layer V (diary). Built ONLY when the diary is opted in;
+        # otherwise self._diary stays None and nothing is constructed (no tables,
+        # no provider, no routing) — byte-identical legacy behavior. The import is
+        # local so the diary package is never loaded when unused.
+        #
+        # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
+        # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
         self._diary = None
-        if diary is not None and diary.enabled:
+        diary_config = self._resolve_diary_config(diary)
+        if diary_config is not None and diary_config.enabled:
             from ..layers.diary.layer import DiaryLayer
 
-            diary_layer = DiaryLayer(self.db, self.episodic, diary)
+            diary_layer = DiaryLayer(self.db, self.episodic, diary_config)
             # Append AFTER episodic+procedural so the diary consolidator runs last.
             self.consolidators.append(diary_layer.consolidator)
             self._diary = diary_layer
@@ -196,6 +206,26 @@ class NexusMemory:
             config.db_path,
             self.session_id,
         )
+
+    @staticmethod
+    def _resolve_diary_config(
+        diary: "DiaryConfig | bool | None",
+    ) -> "DiaryConfig | None":
+        """Normalize the ``diary`` argument into a ``DiaryConfig`` or ``None``.
+
+        Accepts a ``bool`` shorthand (``diary=True`` → ``DiaryConfig(enabled=True)``
+        with defaults, ``diary=False`` → ``None``) or a ``DiaryConfig`` (returned
+        as-is; its own ``enabled`` flag still gates construction). ``None`` stays
+        ``None``. The import is local so the diary package is never loaded when the
+        layer is unused.
+        """
+        if isinstance(diary, bool):
+            if not diary:
+                return None
+            from ..layers.diary.config import DiaryConfig
+
+            return DiaryConfig(enabled=True)
+        return diary
 
     # ------------------------------------------------------------------ #
     # public API
@@ -395,6 +425,41 @@ class NexusMemory:
             return {"status": "error", "error": "diary layer not enabled"}
         return self._diary.submit_summary(job_id, summary)
 
+    def drain_diary(self, run_job: "Callable[[dict], str]") -> int:
+        """Drain the diary's pending handoff jobs through a host model.
+
+        ``run_job`` is a host-supplied callable ``(job: dict) -> str`` where
+        ``job`` is a handoff job as returned by :meth:`pending_summaries`. For
+        each pending job it is invoked, and any non-empty string it returns is
+        folded back in via :meth:`submit_summary`. Returns the number of jobs
+        applied (0 when the diary layer is not enabled).
+
+        When the diary is enabled and a job is pending but ``run_job`` returns no
+        summary (an empty result, or a host that swallowed a model error), the job
+        is skipped and a ``WARNING`` is logged -- so a silently broken host model
+        surfaces instead of leaving the diary entry blank.
+
+        Nexus still never calls an LLM itself -- run_job is the host's model.
+        """
+        if self._diary is None:
+            return 0
+        applied = 0
+        for job in self._diary.pending_summaries():
+            text = run_job(job)
+            if text:
+                self.submit_summary(job["job_id"], text)
+                applied += 1
+            else:
+                logger.warning(
+                    "drain_diary: host run_job returned no summary for %s job %r "
+                    "(period %r); the diary is enabled so this job stays pending -- "
+                    "check the host model (e.g. a removed/invalid aux model).",
+                    job.get("kind", "?"),
+                    job.get("job_id", "?"),
+                    job.get("period"),
+                )
+        return applied
+
     def forget(self, **kw: Any) -> dict:
         """Convenience wrapper around :meth:`TransparencyInterface.forget`."""
         return self.transparency.forget(**kw)
@@ -433,6 +498,228 @@ class NexusMemory:
     def reconstruct(self, time_range: tuple[str, str] | None = None) -> str:
         """Return a human-readable transcript of the episodic dialogue history."""
         return self.episodic.reconstruct(time_range=time_range)
+
+    def _history_source(self) -> list[dict]:
+        """Return candidate turns as ``[{role, content, timestamp}]`` (newest-last).
+
+        Mirrors :meth:`ContextAssembler._recent_dialogue`'s source selection:
+        the durable episodic store when ``episodic_enabled``, otherwise the
+        volatile working buffer. Pulls a generous candidate window so the token
+        truncation mode has enough material to fill its budget; episodic's extra
+        keys (``id``, ``session_id``, ``metadata``) are dropped.
+        """
+        n = max(
+            int(self.config.history_max_turns),
+            int(self.config.working_memory_max_turns),
+        )
+        if self.config.episodic_enabled:
+            turns = self.episodic.recent_turns(n)
+            return [
+                {
+                    "role": t.get("role", ""),
+                    "content": t.get("content", ""),
+                    "timestamp": t.get("timestamp", ""),
+                }
+                for t in turns
+            ]
+        return [t.to_dict() for t in self.working.recent(n)]
+
+    def history(
+        self,
+        *,
+        role: str | None = None,
+        max_turns: int | None = None,
+        max_tokens: int | None = None,
+        token_counter: "Callable[[str], int] | None" = None,
+        as_format: str = "messages",
+        template: str = "{role}: {content}",
+    ) -> "str | list[dict]":
+        """Return the conversation history as a native LLM message history.
+
+        Reads from the durable episodic layer (or, when ``episodic_enabled`` is
+        ``False``, the volatile working buffer), filtered and truncated for direct
+        use as a chat history. Turns are always chronological (newest-last).
+
+        Parameters
+        ----------
+        role:
+            Keep only turns with this role (``"user"`` or ``"assistant"``).
+            ``None`` (default) keeps both. Any other value raises ``ValueError``.
+        max_turns:
+            Explicit cap on the number of turns kept (turns mode).
+        max_tokens:
+            Explicit token budget (tokens mode). Takes precedence over
+            ``max_turns`` when both are given.
+        token_counter:
+            Optional ``(str) -> int`` used in tokens mode. Defaults to the
+            shared :func:`~nexus_memory.core.xml_format.estimate_tokens`
+            heuristic (``len(s) // 4``), the same counter :meth:`tokens` uses.
+        as_format:
+            ``"messages"`` → ``[{role, content}]`` (default); ``"turns"`` →
+            ``[{role, content, timestamp}]``; ``"string"`` → a newline-joined
+            transcript rendered via ``template``. Any other value raises
+            ``ValueError``.
+        template:
+            Per-turn format string for ``as_format="string"`` (default
+            ``"{role}: {content}"``).
+
+        Returns
+        -------
+        A ``list[dict]`` for ``"messages"``/``"turns"`` (``[]`` when empty), or a
+        ``str`` for ``"string"`` (``""`` when empty).
+        """
+        if as_format not in {"messages", "turns", "string"}:
+            raise ValueError(
+                "as_format must be 'messages', 'turns' or 'string', "
+                f"got {as_format!r}"
+            )
+        if role is not None and role not in {"user", "assistant"}:
+            raise ValueError(
+                f"role must be 'user', 'assistant' or None, got {role!r}"
+            )
+
+        turns = self._history_source()
+
+        # Role filter.
+        if role is not None:
+            turns = [t for t in turns if t.get("role") == role]
+
+        # Truncation — explicit args win over config defaults.
+        if max_tokens is not None:
+            mode, budget = "tokens", max_tokens
+        elif max_turns is not None:
+            mode, budget = "turns", max_turns
+        elif self.config.history_truncation == "tokens":
+            mode, budget = "tokens", int(self.config.history_token_budget)
+        else:
+            mode, budget = "turns", int(self.config.history_max_turns)
+
+        if budget <= 0:
+            turns = []
+        elif mode == "turns":
+            turns = turns[-budget:]
+        else:  # tokens — keep the newest suffix that fits the budget.
+            counter = token_counter or estimate_tokens
+            kept: list[dict] = []
+            total = 0
+            for t in reversed(turns):
+                cost = counter(t.get("content", ""))
+                if total + cost > budget:
+                    break
+                total += cost
+                kept.append(t)
+            turns = list(reversed(kept))  # restore chronological order
+
+        # Format.
+        if as_format == "messages":
+            return [
+                {"role": t.get("role", ""), "content": t.get("content", "")}
+                for t in turns
+            ]
+        if as_format == "turns":
+            return [
+                {
+                    "role": t.get("role", ""),
+                    "content": t.get("content", ""),
+                    "timestamp": t.get("timestamp", ""),
+                }
+                for t in turns
+            ]
+        return "\n".join(
+            template.format(role=t.get("role", ""), content=t.get("content", ""))
+            for t in turns
+        )
+
+    def tokens(
+        self,
+        scope: "str | list[str]" = "full",
+        *,
+        messages: "list[dict] | None" = None,
+        response: str | None = None,
+        config: object = None,
+    ) -> "int | dict[str, int]":
+        """Count tokens over the actual LLM round-trip, classified by section.
+
+        Counts the real request you send (the OpenAI-style ``messages`` array)
+        plus the model's ``response`` — i.e. exactly what crosses the wire — and
+        splits it by section, NOT by storage layer:
+
+        * **system** — the full system message(s): the host's base prompt *and*
+          everything Nexus injects into it (``directives`` + ``facts``). The
+          recalled facts/directives live inside the system message, so they count
+          here, not under ``input``.
+        * **input** — the rest of the prompt: every ``user``/``assistant`` message
+          (the conversation history plus the current user turn). Everything except
+          the system message.
+        * **output** — the model's ``response`` (the new completion).
+
+        This is section-based on purpose: ``system`` is whatever you put in the
+        ``role: "system"`` entry — Nexus does not have to own the base prompt to
+        count it, because you hand it the array you actually sent.
+
+        Scopes (a string, or a list for a per-scope breakdown):
+
+        ==========  =====================================================
+        scope       counts
+        ==========  =====================================================
+        ``system``  all ``role == "system"`` message content
+        ``input``   all ``role in ("user", "assistant")`` message content
+        ``output``  the ``response`` text (the model's completion)
+        ``full``    ``system`` + ``input`` + ``output`` (default)
+        ==========  =====================================================
+
+        Args:
+            scope: One scope name, or a list of them.
+            messages: The request array you send the LLM (``[{role, content}]``).
+                Required for ``system``/``input``/``full``; ``[]`` if omitted.
+            response: The model's reply text (the ``output``); ``""`` if omitted.
+            config: How to count, resolved by
+                :func:`~nexus_memory.core.xml_format.resolve_counter`. ``None``
+                (default) uses the offline ``len(s) // 4`` heuristic; ``"tiktoken"``
+                or a model name (e.g. ``"gpt-4o"``) uses the optional **tiktoken**
+                backend for exact counts; a ``(str) -> int`` callable is used as-is;
+                a ``{"model"|"encoding": ...}`` dict selects a specific encoding.
+                Requesting tiktoken without it installed raises ``ImportError``.
+
+        Returns:
+            An ``int`` for a single scope; for a list, a ``{scope: int}`` dict
+            with an extra ``"total"`` key (the sum of the listed scopes).
+        """
+        count = resolve_counter(config)
+        single = isinstance(scope, str)
+        requested = [scope] if single else list(scope)
+
+        valid = {"system", "input", "output", "full"}
+        unknown = [s for s in requested if s not in valid]
+        if unknown:
+            raise ValueError(
+                f"unknown token scope(s): {unknown}; valid scopes: {sorted(valid)}"
+            )
+
+        msgs = messages or []
+        system_tokens = sum(
+            count(m.get("content", "")) for m in msgs if m.get("role") == "system"
+        )
+        input_tokens = sum(
+            count(m.get("content", ""))
+            for m in msgs
+            if m.get("role") in ("user", "assistant")
+        )
+        output_tokens = count(response or "")
+
+        def value(name: str) -> int:
+            return {
+                "system": system_tokens,
+                "input": input_tokens,
+                "output": output_tokens,
+                "full": system_tokens + input_tokens + output_tokens,
+            }[name]
+
+        if single:
+            return value(scope)
+        out = {name: value(name) for name in requested}
+        out["total"] = sum(out.values())
+        return out
 
     def distill(self) -> dict:
         """Promote standing-preference semantic facts into procedural rules.

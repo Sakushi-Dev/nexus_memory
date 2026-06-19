@@ -9,7 +9,11 @@ prompt of a host application. Fact *content* is XML-escaped with
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape, quoteattr
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -69,3 +73,65 @@ def format_as_xml(scored_facts: list[dict]) -> str:
 def estimate_tokens(text: str) -> int:
     """Roughly estimate the token count of ``text`` (~4 chars per token)."""
     return len(text) // 4
+
+
+def _tiktoken_counter(*, model: str | None = None, encoding: str | None = None):
+    """Build a tiktoken-backed ``(str) -> int`` counter.
+
+    ``encoding`` wins over ``model``; with neither, the ``cl100k_base`` encoding
+    is used. An unknown model name falls back to ``cl100k_base`` rather than
+    raising. tiktoken is an OPTIONAL dependency — if it is not installed, this
+    raises :class:`ImportError` with an install hint.
+    """
+    try:
+        import tiktoken
+    except ModuleNotFoundError as exc:  # optional dep — surface a clear hint
+        raise ImportError(
+            "tiktoken is not installed; install the optional extra with "
+            "`pip install nexus-memory[tiktoken]` to use it as a token counter"
+        ) from exc
+
+    if encoding is not None:
+        enc = tiktoken.get_encoding(encoding)
+    elif model is not None:
+        try:
+            enc = tiktoken.encoding_for_model(model)
+        except KeyError:
+            enc = tiktoken.get_encoding("cl100k_base")
+    else:
+        enc = tiktoken.get_encoding("cl100k_base")
+    return lambda text: len(enc.encode(text or ""))
+
+
+def resolve_counter(config: object = None) -> "Callable[[str], int]":
+    """Resolve a token-counting ``config`` into a ``(str) -> int`` counter.
+
+    ``config`` selects *how* tokens are counted:
+
+    * ``None`` — the default :func:`estimate_tokens` heuristic (``len(s) // 4``),
+      offline and dependency-free;
+    * a **callable** — used as-is (your own counter);
+    * ``"tiktoken"`` — tiktoken with the default ``cl100k_base`` encoding;
+    * any other **str** — tiktoken's encoding for that OpenAI model name
+      (e.g. ``"gpt-4o"``), falling back to ``cl100k_base`` if unknown;
+    * a **dict** ``{"model": ...}`` or ``{"encoding": ...}`` — explicit tiktoken
+      selection.
+
+    Requesting tiktoken without it installed raises :class:`ImportError`.
+    """
+    if config is None:
+        return estimate_tokens
+    if callable(config):
+        return config  # a user-supplied (str) -> int
+    if isinstance(config, str):
+        if config == "tiktoken":
+            return _tiktoken_counter()
+        return _tiktoken_counter(model=config)
+    if isinstance(config, dict):
+        return _tiktoken_counter(
+            model=config.get("model"), encoding=config.get("encoding")
+        )
+    raise TypeError(
+        f"unsupported token config: {config!r}; expected None, a callable, a "
+        "model/'tiktoken' string, or a {'model'|'encoding': ...} dict"
+    )

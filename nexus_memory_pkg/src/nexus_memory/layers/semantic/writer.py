@@ -57,12 +57,12 @@ class MemoryWriter:
         an async ingest finishes (errors invoke it with ``written_ids=None``).
     consolidators:
         Optional list of :class:`~nexus_memory.consolidation.Consolidator`
-        instances (v2 multi-layer transfer). When provided *and*
+        instances. When provided *and*
         ``config.auto_consolidate`` is set, each is invoked at the end of
         ``_ingest`` — after the semantic writes — to fan the interaction out to
         the episodic/procedural layers. A consolidator failure is logged and
         skipped; it never fails the semantic write. ``None`` (default) preserves
-        the exact pre-v2 behavior.
+        the original single-layer behavior.
     """
 
     def __init__(
@@ -172,7 +172,7 @@ class MemoryWriter:
 
         logger.debug("Ingest wrote %d/%d fact(s)", len(written_ids), len(facts))
 
-        # v2 inter-layer transfer: after the semantic writes, fan the raw
+        # Inter-layer transfer: after the semantic writes, fan the raw
         # interaction out to the episodic/procedural layers. Best-effort — a
         # consolidator failure is logged and skipped, never failing the write.
         self._run_consolidators(interaction, metadata, written_ids)
@@ -233,8 +233,8 @@ class MemoryWriter:
         Performs a ``knn_search(k=1)`` and, if the nearest neighbour's cosine
         similarity is at or above ``config.redundancy_threshold``, returns
         ``'redundant'``. A fuller SLM-driven ``update``/``contradiction`` check
-        is out of scope for this milestone, so we never return ``'update'``
-        here (the value is reserved by the contract).
+        is out of scope here, so we never return ``'update'``
+        (the value is reserved for future use).
         """
         if self._db.count() == 0:
             return "insert"
@@ -316,8 +316,8 @@ class MemoryWriter:
     def _get_pii_filter(self) -> Any:
         """Lazily import and cache a :class:`PIIFilter`, or ``None`` if absent.
 
-        ``privacy.py`` may be implemented by a later milestone; guard the import
-        so the writer remains usable in the meantime.
+        The optional :class:`PIIFilter` may be unavailable; guard the import
+        so the writer remains usable without it.
         """
         if self._pii_filter is not False:
             return self._pii_filter

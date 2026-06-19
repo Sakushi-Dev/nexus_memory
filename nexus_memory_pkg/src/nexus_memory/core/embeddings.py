@@ -107,7 +107,7 @@ class SentenceTransformerEmbedder(Embedder):
         except ImportError as exc:  # pragma: no cover - optional path
             raise ImportError(
                 "SentenceTransformerEmbedder requires the 'sentence-transformers' "
-                "package. Install it with: pip install nexus-memory[sentence-transformers]"
+                "package. Install it with: pip install sentence-transformers"
             ) from exc
         self._model = SentenceTransformer(model_name, **kwargs)  # type: ignore[arg-type]
         self.dim = int(self._model.get_sentence_embedding_dimension())
@@ -137,7 +137,7 @@ class OpenAIEmbedder(Embedder):
         except ImportError as exc:  # pragma: no cover - optional path
             raise ImportError(
                 "OpenAIEmbedder requires the 'openai' package. "
-                "Install it with: pip install nexus-memory[openai]"
+                "Install it with: pip install openai"
             ) from exc
         self._client = OpenAI(**kwargs)  # type: ignore[arg-type]
         self.model = model
