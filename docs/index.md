@@ -100,7 +100,7 @@ Every tunable, in one place.
 | Page | Covers |
 |------|--------|
 | [NexusConfig](configuration/nexus-config.md) | The single config dataclass — scoring, dedup, cache, privacy/security, and per-layer switches. |
-| [DiaryConfig](configuration/diary-config.md) | Layer V settings: `update_every`, `section_size`, `max_sections`, `inject_days`. |
+| [DiaryConfig](configuration/diary-config.md) | Layer V settings: `update_every`, `diary_window`, `max_sentences`, `section_size`, `max_sections`, `inject_days`. |
 | [Tuning](configuration/tuning.md) | Practical guidance on scoring (`min_score`, `decay_lambda`, `default_top_k`) and dedup (`redundancy_threshold`). |
 
 ### Changelog

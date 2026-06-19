@@ -6,10 +6,17 @@ makes the diary **asynchronous** and **provider-agnostic**: the chat only
 *ingests* (fast, non-blocking), while a **secondary model** summarizes later.
 
 Each job carries Nexus's OWN ``prompt`` plus the prior entry
-(``prior_summary``) and the new turns (``input``). The host just runs that prompt
-— Nexus owns the instruction. Because the prior entry is fed back in every time,
-the diary **rolls**: a new turn that corrects an earlier one updates the entry
-(see ``DAILY_PROMPT``) instead of starting over.
+(``prior_summary``) and the recent turns (``input``). The host just runs that
+prompt — Nexus owns the instruction. The diary is the **assistant's own
+first-person journal**: ``DAILY_PROMPT`` asks the model to reflect on the whole
+exchange (user + assistant) in its own voice, as flowing prose of 2-N sentences.
+
+The job re-sends a **rolling, overlapping window** — up to ``diary_window`` turns
+of the day (default 20 turns = 40 rows), not a strict delta. Because the prior
+entry is fed back in every time and the prompt asks the model to reconcile, the
+diary **rolls**: a newer turn that corrects an earlier one revises the entry, and
+turns already reflected in the prior entry are NOT restated (overlap by design,
+reconciled — never naively appended).
 
 We ingest in two rounds to show that: round 2 contradicts round 1 (the deadline
 moves), and the prior entry flows into the next job.
@@ -24,21 +31,25 @@ Run it::
 
 from pathlib import Path
 
-from nexus_memory import NexusMemory
+from nexus_memory import DiaryConfig, NexusMemory
 
 DB_PATH = Path("nexus_memory.db")
 
-# update_every=3 (the default) -> one daily job per 3 interactions, so each round
-# below enqueues exactly one summary job.
+# update_every=5 (the default) -> one daily job per 5 interactions, so each round
+# below (5 interactions) enqueues exactly one summary job.
 ROUND_1 = [
     ("My name is Chris and I'm building a memory library.", "Nice to meet you, Chris."),
     ("I prefer Python and my deadline is next Friday.", "Noted - Python, Friday."),
     ("My favorite color is purple.", "Purple it is."),
+    ("I'm using SQLite for storage.", "SQLite is a solid choice."),
+    ("The library has five memory layers.", "Five layers - ambitious."),
 ]
 ROUND_2 = [
     ("Actually the deadline moved to next Monday.", "Got it - Monday."),
     ("I started writing tests today.", "Nice - tests under way."),
     ("Feeling good about the progress.", "Great to hear."),
+    ("I added a diary layer.", "A diary layer - nice touch."),
+    ("Wrapping up for the day.", "Rest well, Chris."),
 ]
 
 
@@ -46,17 +57,36 @@ def secondary_model(job: dict) -> str:
     """Stand-in for the host's SECONDARY model (offline, deterministic).
 
     A real host forwards Nexus's own ``job["prompt"]`` together with the prior
-    entry (``job["prior_summary"]``) and the new turns (``job["input"]``) to its
-    model of choice — Nexus owns the instruction, the host just runs it. This
-    stub keeps the prior entry and folds in the new user turns, so the diary
-    ROLLS. (A real model would also *reconcile* contradictions per the prompt —
-    e.g. fix "Friday" to "Monday" — not just append them.)
+    entry (``job["prior_summary"]``) and the recent turns (``job["input"]``) to
+    its model of choice — Nexus owns the instruction, the host just runs it. The
+    diary is the assistant's first-person journal, so this stub writes in the
+    first person and folds in BOTH roles (what the user said and what I said).
+
+    The window OVERLAPS the prior entry, so a faithful stub must RECONCILE rather
+    than naively append: it keeps the prior entry and weaves in only the genuinely
+    new developments. We approximate that here by skipping any turn whose content
+    already appears in the prior entry (a real model reconciles semantically and
+    also fixes contradictions per the prompt — e.g. correct "Friday" to "Monday"
+    — not just add them).
     """
-    new = "; ".join(t["content"] for t in job["input"] if t.get("role") == "user")
+    items = job["input"]
     prior = job.get("prior_summary") or ""
+
+    # Only describe turns whose content is not already reflected in the prior entry.
+    fresh = [t for t in items if t["content"] not in prior]
+    user_said = "; ".join(t["content"] for t in fresh if t.get("role") == "user")
+    i_said = "; ".join(t["content"] for t in fresh if t.get("role") == "assistant")
+
+    new_bits = []
+    if user_said:
+        new_bits.append(f"the user told me: {user_said}")
+    if i_said:
+        new_bits.append(f"I replied: {i_said}")
+    new = "; ".join(new_bits)
+
     if prior:
-        return f"{prior} Later: {new}." if new else prior
-    return f"The user mentioned: {new}." if new else "Nothing notable."
+        return f"{prior} Continuing on, {new}." if new else prior
+    return f"Today {new}." if new else "Nothing notable happened today."
 
 
 def run_round(memory: NexusMemory, interactions: list[tuple[str, str]]) -> str:
@@ -78,7 +108,9 @@ def run_round(memory: NexusMemory, interactions: list[tuple[str, str]]) -> str:
 
 
 def main() -> None:
-    memory = NexusMemory(diary=True, db_path=str(DB_PATH))  # opt in to Layer V
+    # Opt in to Layer V. The default cadence is update_every=5; each round below
+    # has exactly 5 interactions so each enqueues one daily job.
+    memory = NexusMemory(diary=DiaryConfig(enabled=True), db_path=str(DB_PATH))
     try:
         # Each round returns its text; main() prints it.
         print("########## 1. round 1 -- ingest + drain ##########")

@@ -31,19 +31,21 @@ The diary maintains three levels of decreasing granularity and increasing covera
 ```text
         granularity ▲                          coverage ▼
   L0  episodic_turns        raw user/assistant turns          (Layer II, every ingest)
-  L1  diary_days            1 rolling summary per DAY          (updated every N=3 interactions)
+  L1  diary_days            1 rolling summary per DAY          (updated every N=5 interactions)
   L2  persistent_sections   1 summary per 7 daily diaries      (ring of M=8 sections ≈ 56 days)
 ```
 
 | Symbol | Config field ([`config.py`](../../src/nexus_memory/layers/diary/config.py)) | Meaning | Default |
 | :-- | :-- | :-- | :-- |
-| `N` | `update_every` | interactions between rolling daily-diary updates | **3** |
+| `N` | `update_every` | interactions between rolling daily-diary updates | **5** |
+| — | `diary_window` | turns (×2 rows) re-sent per rolling daily job (overlap) | **20** |
+| — | `max_sentences` | upper bound of the entry's `2-N` sentence range | **50** |
 | `SECTION_SIZE` | `section_size` | daily diaries folded into one persistent section | **7** |
 | `M` | `max_sections` | persistent sections kept (ring; oldest overwritten) | **8** |
 | `K` | `inject_days` | finalized daily diaries injected into context | **1** (previous day) |
 
 - **L0 — `episodic_turns`** (owned by [Layer II — Episodic](memory-layers.md)): the raw turns. Newest detail is served verbatim by `<recent_dialogue>`.
-- **L1 — `diary_days`**: one **rolling** narrative per UTC day. Every `N=3` interactions a daily job is enqueued whose `prior_summary` is the day's current text, so the summary is *refined in place* rather than rewritten from scratch.
+- **L1 — `diary_days`**: one **rolling** narrative per UTC day, written as the assistant's own **first-person prose**. Every `N=5` interactions a daily job is enqueued whose `prior_summary` is the day's current text and whose `input` is a rolling, **overlapping** window of up to `diary_window=20` turns (both roles). The summary is *refined in place* (reconciling the overlap against the prior entry) rather than rewritten from scratch.
 - **L2 — `persistent_sections`**: one coarser summary per `SECTION_SIZE=7` finalized daily diaries, held in a **ring of `M=8` slots** (≈ 56 days). When the ring is full, the **oldest section is overwritten** — deliberate, bounded *deep forgetting*.
 
 Beyond the ≈ 56-day window the oldest epoch is dropped. (An optional "lifetime" roll-up before overwrite is noted as future work; not built.)
@@ -113,18 +115,19 @@ Built by `DiaryLayer._to_handoff` ([`layer.py`](../../src/nexus_memory/layers/di
   "job_id": "uuid",
   "kind": "daily",
   "period": "2026-06-16",
-  "prompt": "You maintain a concise third-person diary of a user's day. ...",
+  "prompt": "You are the assistant. Keep a personal diary of your day, written in your own voice in the first person ('I'). ...",
   "prior_summary": "…the day's/section's current summary, or \"\" if none yet…",
   "input": [
-    {"role": "user", "content": "...", "timestamp": "..."}
+    {"id": 1, "role": "user", "content": "...", "timestamp": "..."},
+    {"id": 2, "role": "assistant", "content": "...", "timestamp": "..."}
   ]
 }
 ```
 
 - `period` is present for `daily` jobs and `null` for `section` jobs.
-- `prompt` is forwarded **verbatim** to the model.
+- `prompt` is forwarded **verbatim** to the model (the `2-N` sentence range is already filled in from `max_sentences`).
 - `prior_summary` is the current L1/L2 summary (an empty string `""` when there is none yet, never `null`) — it drives **rolling refinement** (the model edits the prior text rather than starting over).
-- `input` carries new turns for `daily` jobs, or a single finalized day summary (`[{period, summary}]`) for `section` jobs.
+- `input` for `daily` jobs is a rolling, **overlapping** window of up to `diary_window` turns (**both roles**, ascending by `id`) — not a strict delta. It always includes the last `diary_window` turns (overlap, for reconciliation) and everything ingested since the last applied drain (completeness). For `section` jobs it is a single finalized day summary (`[{period, summary}]`).
 
 The host composes its own model call however it wants — e.g. `system = prompt`, `user = prior_summary + render(input)` — produces text, then calls `submit_summary(job_id, text)`.
 
@@ -142,26 +145,28 @@ The host composes its own model call however it wants — e.g. `system = prompt`
 
 Nexus ships two prompt templates in [`prompts.py`](../../src/nexus_memory/layers/diary/prompts.py):
 
-- **`DAILY_PROMPT`** — *"You maintain a concise third-person diary of a user's day. Given the prior entry and the new turns, produce an updated 2-5 sentence entry. Keep durable facts, decisions, mood, and open threads; drop pleasantries."*
-- **`SECTION_PROMPT`** — *"You maintain a rolling multi-day summary. Given the prior section summary and a new day's diary, integrate it into a single coherent paragraph that preserves the throughline across the period."*
+- **`DAILY_PROMPT`** (a template — `{max_sentences}` is filled at enqueue time) — *"You are the assistant. Keep a personal diary of your day, written in your own voice in the first person ('I'). Given your prior entry and the recent turns of the conversation — both what the user said and what you said in reply — produce an updated entry of 2-{max_sentences} sentences … Write it as flowing prose … never use bullet points, numbered lists, headings, or any categorical structure … The recent turns may include turns already reflected in your prior entry; do not restate them, only incorporate genuinely new developments. When a newer turn corrects or contradicts your prior entry, treat the newer turn as authoritative …"*
+- **`SECTION_PROMPT`** — *"You are the assistant, keeping a rolling multi-day record in your own first-person voice. Given your prior section summary and a new day's diary entry, weave them into a single coherent paragraph of flowing prose — never lists or headings — that preserves the throughline across the period."*
+
+Because the daily window now **overlaps** the prior entry (it re-sends up to `diary_window` turns rather than a strict delta), overlap-correctness is a model-quality dependency: the prompt instructs the model to reconcile (merge/revise) rather than append. A naive append-style host would double-count the overlap — see the reconciling stub in `examples/diary_outbox.py`.
 
 ## The trigger state machine
 
-`DiaryScheduler` ([`scheduler.py`](../../src/nexus_memory/layers/diary/scheduler.py)) is the heart of the layer. It runs **inside the existing consolidation step** of `ingest` (via `DiaryConsolidator`, which runs on the writer's background thread *after* the episodic consolidator, so the current interaction's turns are already in `episodic_turns`) and **inside `submit_summary`**. It only enqueues/dequeues jobs and updates rows — **it never calls a model.** The scheduler reads new turns directly from `episodic_turns` via the shared connection, never importing `EpisodicStore`.
+`DiaryScheduler` ([`scheduler.py`](../../src/nexus_memory/layers/diary/scheduler.py)) is the heart of the layer. It runs **inside the existing consolidation step** of `ingest` (via `DiaryConsolidator`, which runs on the writer's background thread *after* the episodic consolidator, so the current interaction's turns are already in `episodic_turns`) and **inside `submit_summary`**. It only enqueues/dequeues jobs and updates rows — **it never calls a model.** The scheduler reads the day's turns directly from `episodic_turns` via the shared connection, never importing `EpisodicStore`.
 
 ### On each ingested interaction — `on_interaction(day)`
 
 Let `today = UTC day` and `last = MAX(period)` in `diary_days`.
 
-1. **Day rollover** — if `today > last` and `diary_days[last]` is not finalized: mark it `finalized = 1` and enqueue a **final daily job** for `last` (only if it has turns past `covered_through`, so the closing day is fully summarized).
+1. **Day rollover** — if `today > last` and `diary_days[last]` is not finalized: mark it `finalized = 1` and enqueue a **final daily job** for `last` (with `force=True`, so a finalized-but-unfolded day is never stranded by the empty-tick guard below).
 2. **Upsert** `diary_days[today]` (`INSERT OR IGNORE`) and `interaction_count += 1`.
-3. **Daily cadence** — if `interaction_count % N == 0`: enqueue a **rolling daily job** for `today` with `prior_summary = today.summary`, `input =` turns with `id > covered_through` that day, and `advance_to = max(input.id)`. Enqueuing **supersedes** any earlier pending daily job for `today` (the one-pending invariant), so two N-ticks before a submit leave exactly one `pending` job and one `superseded`.
+3. **Daily cadence** — if `interaction_count % N == 0`: enqueue a **rolling daily job** for `today` with `prior_summary = today.summary`, `input =` a rolling, **overlapping** window of up to `diary_window` turns that day (both roles, ascending by `id`), and `advance_to = max(input.id)`. The window's lower edge is `min(covered_through + 1, newest_id - diary_window*2 + 1)` — so it always carries the last `diary_window` turns (overlap, for reconciliation) and never drops anything ingested since the last applied drain (completeness). If the first selected row is an orphaned `role=='assistant'` (its paired user row fell outside the window) it is dropped, so the window starts on a turn boundary. Enqueuing **supersedes** any earlier pending daily job for `today` (the one-pending invariant), so two N-ticks before a submit leave exactly one `pending` job and one `superseded`.
 
-A daily job is only enqueued when there are actually new turns; an empty `input` short-circuits.
+A rolling daily job short-circuits on the **empty-tick guard**: if the day has no turns, or nothing new was ingested since the last *applied* summary (`advance_to == covered_through`), no job is enqueued. The rollover and `finalize()` paths bypass this guard (`force=True`) so a closing day always gets its final job.
 
 ### On `submit_summary` with `kind = "daily"` — `_apply_daily`
 
-Set `summary` and `covered_through = advance_to`, mark the job `done`. If that day is **finalized and not yet folded**, trigger a section fold (respecting the one-pending-section invariant below).
+Set `summary` and `covered_through = advance_to` (a monotonic last-applied high-water mark — it no longer *gates* the window, the overlapping window does that; it only powers the empty-tick guard and lets finalize/fold terminate), mark the job `done`. If that day is **finalized and not yet folded**, trigger a section fold (respecting the one-pending-section invariant below).
 
 ### Folding a finalized day into the ring — `_enqueue_section` (`kind = "section"`)
 
@@ -178,7 +183,7 @@ This *one-pending + chronological fold queue* invariant guarantees daily diaries
 
 ### On `finalize()` — `NexusMemory.close()`
 
-Mark the current day `finalized` and enqueue its final daily job if it has uncovered turns. **Nothing is run** — jobs simply persist in SQLite for the next session's host to drain.
+Mark the current day `finalized` and enqueue its final daily job (with `force=True`, bypassing the empty-tick guard so the closing day is never stranded). **Nothing is run** — jobs simply persist in SQLite for the next session's host to drain.
 
 ## Context injection
 
@@ -231,8 +236,8 @@ from nexus_memory import NexusMemory
 
 m = NexusMemory(diary=True)   # db_path defaults to "nexus_memory.db"
 
-# Three interactions cross the N=3 cadence -> a daily job is enqueued.
-for i in range(3):
+# Five interactions cross the N=5 cadence -> a daily job is enqueued.
+for i in range(5):
     m.process({"action": "ingest", "interaction": {
         "query": f"Note {i}: shipped the release and fixed the parser bug.",
         "response": "Got it, logged.",

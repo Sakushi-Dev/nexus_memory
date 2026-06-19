@@ -114,7 +114,9 @@ NexusMemory(diary=DiaryConfig(enabled=True, update_every=5))  # custom
 | Field | Type | Default | Symbol | Controls |
 | :-- | :-- | :-- | :-- | :-- |
 | `enabled` | `bool` | `False` | — | Master switch. When `False`, the layer is never built (no tables, no provider, no routing). |
-| `update_every` | `int` | `3` | `N` | Interactions between rolling daily-summary jobs (L1). |
+| `update_every` | `int` | `5` | `N` | Interactions between rolling daily-summary jobs (L1). |
+| `diary_window` | `int` | `20` | — | Turns (×2 rows) re-sent per rolling daily job — an overlapping window, both roles. |
+| `max_sentences` | `int` | `50` | — | Upper bound of the daily entry's `2-N` sentence range (floor is 2). |
 | `section_size` | `int` | `7` | `SECTION_SIZE` | Finalized daily diaries folded into one persistent section (L2). |
 | `max_sections` | `int` | `8` | `M` | Ring capacity for persistent sections; oldest overwritten (≈ `M · SECTION_SIZE` = 56 days). |
 | `inject_days` | `int` | `1` | `K` | Finalized daily diaries injected into `<memory_context>`. |
@@ -198,13 +200,15 @@ NexusMemory(config=NexusConfig(procedural_max_directives=24))
 ### Diary (Layer V)
 
 ```python
-# Defaults (N=3, SECTION_SIZE=7, M=8, K=1).
+# Defaults (N=5, diary_window=20, max_sentences=50, SECTION_SIZE=7, M=8, K=1).
 NexusMemory(diary=True)
 
 # Custom cadence + a longer retention ring; inject the last 2 finalized days.
 NexusMemory(diary=DiaryConfig(
     enabled=True,
-    update_every=5,     # summarize every 5 interactions
+    update_every=3,     # summarize every 3 interactions (pins the pre-0.3.5 cadence)
+    diary_window=40,    # re-send up to 40 turns of overlap per rolling job
+    max_sentences=80,   # allow a longer daily entry
     section_size=14,    # 14 days per persistent section
     max_sections=12,    # ring of 12 sections (~168 days)
     inject_days=2,

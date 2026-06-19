@@ -408,7 +408,7 @@ memory.process({"action": "pending_summaries"})
             "period": "2026-06-17" | None,   # job["target"] for kind="daily", else None
             "prompt": "<Nexus-owned prompt; forward verbatim>",
             "prior_summary": str | None,     # rolling summary to refine
-            "input": [ {"id": int, "role": str, "content": str}, ... ],  # new items
+            "input": [ {"id": int, "role": str, "content": str}, ... ],  # daily: rolling overlapping window (both roles, up to diary_window turns)
         },
         ...
     ],

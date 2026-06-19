@@ -37,7 +37,9 @@ memory = NexusMemory(db_path="nexus.db", diary=True)
 | Field | Symbol | Meaning | Default |
 | :-- | :-- | :-- | :-- |
 | `enabled` | — | master switch; when `False` the layer is never built | `False` |
-| `update_every` | `N` | interactions between rolling daily updates | `3` |
+| `update_every` | `N` | interactions between rolling daily updates | `5` |
+| `diary_window` | — | turns (×2 rows) re-sent per rolling daily job (overlap) | `20` |
+| `max_sentences` | — | upper bound of the entry's `2-N` sentence range | `50` |
 | `section_size` | `SECTION_SIZE` | daily diaries folded into one persistent section | `7` |
 | `max_sections` | `M` | persistent sections kept (ring; oldest overwritten) | `8` |
 | `inject_days` | `K` | finalized daily diaries injected into context | `1` |
@@ -51,10 +53,10 @@ The diary maintains three levels of granularity, each coarser and longer-lived t
 | Level | Table | What it holds | Cadence |
 | :-- | :-- | :-- | :-- |
 | **L0** | `episodic_turns` (owned by [Layer II](../architecture/memory-layers.md)) | raw user/assistant turns | every ingest |
-| **L1** | `diary_days` | 1 rolling summary per UTC **day** | updated every `N=3` interactions |
+| **L1** | `diary_days` | 1 rolling summary per UTC **day** | updated every `N=5` interactions |
 | **L2** | `persistent_sections` | 1 summary per `SECTION_SIZE=7` daily diaries | ring of `M=8` slots (≈ 56 days) |
 
-- **L1 — `diary_days`**: one **rolling** narrative per UTC day. Every `N` interactions a daily job is enqueued whose `prior_summary` is the day's current text, so the entry is *refined in place* rather than rewritten from scratch.
+- **L1 — `diary_days`**: one **rolling** narrative per UTC day, written as the assistant's own **first-person prose**. Every `N` interactions a daily job is enqueued whose `prior_summary` is the day's current text and whose `input` is a rolling, **overlapping** window of up to `diary_window=20` turns (both roles), so the entry is *refined in place* (reconciling the overlap) rather than rewritten from scratch.
 - **L2 — `persistent_sections`**: one coarser summary per `SECTION_SIZE` finalized daily diaries, held in a **ring of `M` slots**. When the ring is full, the **oldest section is overwritten** — deliberate, bounded *deep forgetting*.
 
 The full trigger state machine (day rollover, daily cadence, section folding, the ring) lives in `DiaryScheduler` (`src/nexus_memory/layers/diary/scheduler.py`) and is documented in the [Diary Layer architecture](../architecture/diary-layer.md). For integration you only need the two host-facing actions below.
@@ -74,7 +76,7 @@ Returns the outbox's pending **handoff job objects**, oldest-first. Each job is 
 | `period` | `str` \| `None` | the `YYYY-MM-DD` day (present for `daily` jobs; `None` for `section`) |
 | `prompt` | `str` | the Nexus-owned instruction — **forward this verbatim to your model** |
 | `prior_summary` | `str` \| `None` | the current L1/L2 summary — drives **rolling** refinement |
-| `input` | `list[dict]` | `daily`: new turns `{role, content, timestamp, id}`; `section`: finalized day summaries `{period, summary}` |
+| `input` | `list[dict]` | `daily`: a rolling, **overlapping** window of up to `diary_window` turns `{id, role, content, timestamp}` (both roles); `section`: finalized day summaries `{period, summary}` |
 
 As JSON:
 
@@ -83,18 +85,21 @@ As JSON:
   "job_id": "uuid",
   "kind": "daily",
   "period": "2026-06-16",
-  "prompt": "You maintain a concise third-person diary of a user's day. ...",
+  "prompt": "You are the assistant. Keep a personal diary of your day, written in your own voice in the first person ('I'). ...",
   "prior_summary": "…or null…",
   "input": [
-    {"id": 12, "role": "user", "content": "...", "timestamp": "..."}
+    {"id": 11, "role": "user", "content": "...", "timestamp": "..."},
+    {"id": 12, "role": "assistant", "content": "...", "timestamp": "..."}
   ]
 }
 ```
 
 The two prompts Nexus ships (`src/nexus_memory/layers/diary/prompts.py`) are:
 
-- **`DAILY_PROMPT`** — *"You maintain a concise third-person diary of a user's day. Given the prior entry and the new turns, produce an updated 2-5 sentence entry. Keep durable facts, decisions, mood, and open threads; drop pleasantries."*
-- **`SECTION_PROMPT`** — *"You maintain a rolling multi-day summary. Given the prior section summary and a new day's diary, integrate it into a single coherent paragraph that preserves the throughline across the period."*
+- **`DAILY_PROMPT`** (a template — `{max_sentences}` is filled in at enqueue time from `DiaryConfig.max_sentences`) — *"You are the assistant. Keep a personal diary of your day, written in your own voice in the first person ('I'). Given your prior entry and the recent turns of the conversation — both what the user said and what you said in reply — produce an updated entry of 2-{max_sentences} sentences … Write it as flowing prose … never use bullet points, numbered lists, headings, or any categorical structure … The recent turns may include turns already reflected in your prior entry; do not restate them, only incorporate genuinely new developments …"*
+- **`SECTION_PROMPT`** — *"You are the assistant, keeping a rolling multi-day record in your own first-person voice. Given your prior section summary and a new day's diary entry, weave them into a single coherent paragraph of flowing prose — never lists or headings — that preserves the throughline across the period."*
+
+> The daily window **overlaps** the prior entry (it re-sends up to `diary_window` turns, not a strict delta), so a faithful host must **reconcile** — merge/revise rather than naively append — exactly what the prompt instructs. The example stub below demonstrates this.
 
 The host composes its own model call however it wants — e.g. system message = `prompt`, user message = `prior_summary` followed by a rendering of `input`.
 
@@ -134,16 +139,22 @@ Call `drain_outbox(memory)` whenever convenient — after each turn, on a timer,
 
 The runnable example [`examples/diary_outbox.py`](../../examples/diary_outbox.py) wires the whole loop against a **trivial, deterministic stand-in "model"**, so it runs entirely offline (no network, no API key). A real host swaps `fake_model` for an actual model call — nothing else changes.
 
-The stand-in stitches the user's statements into a third-person entry, refining the prior summary when one is supplied (proving the rolling behavior):
+The stand-in writes the assistant's own **first-person prose**, folds in **both roles** (what the user said and what I said), and **reconciles** the overlapping window against the prior entry — keeping the prior text and weaving in only the genuinely new developments (proving the rolling behavior):
 
 ```python
 def fake_model(prompt: str, prior_summary: str | None, turns: list[dict]) -> str:
-    said = "; ".join(t["content"] for t in turns if t.get("role") == "user")
-    entry = f"The user mentioned: {said}" if said else "Nothing notable."
-    return f"{prior_summary} {entry}".strip() if prior_summary else entry
+    prior = prior_summary or ""
+    fresh = [t for t in turns if t["content"] not in prior]  # skip already-reflected turns
+    said = "; ".join(t["content"] for t in fresh if t.get("role") == "user")
+    replied = "; ".join(t["content"] for t in fresh if t.get("role") == "assistant")
+    new = "; ".join(b for b in (f"the user told me: {said}" if said else "",
+                                f"I replied: {replied}" if replied else "") if b)
+    if prior:
+        return f"{prior} Continuing on, {new}." if new else prior
+    return f"Today {new}." if new else "Nothing notable happened today."
 ```
 
-The driver: opt in to the layer, ingest three interactions to cross the `N=3` cadence, wait for the async writer + diary consolidator, then drain and inspect:
+The driver: opt in to the layer, ingest five interactions to cross the `N=5` cadence, wait for the async writer + diary consolidator, then drain and inspect:
 
 ```python
 import tempfile
@@ -159,6 +170,8 @@ try:
         ("I prefer Python and my deadline is next Friday.",
          "Noted — Python, and a Friday deadline."),
         ("My favorite color is purple.", "Purple it is."),
+        ("I'm using SQLite for storage.", "SQLite is a solid choice."),
+        ("The library has five memory layers.", "Five layers — ambitious."),
     ]
     for query, response in interactions:
         memory.process({
@@ -182,7 +195,7 @@ finally:
 
 What happens, step by step:
 
-1. **Ingest × 3** crosses the `N=3` cadence, so on the third interaction the scheduler enqueues exactly one `daily` job for today. Its `prior_summary` is empty (no prior entry) and its `input` is the six turns (three user + three assistant) of the day.
+1. **Ingest × 5** crosses the `N=5` cadence, so on the fifth interaction the scheduler enqueues exactly one `daily` job for today. Its `prior_summary` is empty (no prior entry) and its `input` is the ten turns (five user + five assistant) of the day — the rolling window holds the whole day, well under the `diary_window=20` turn cap.
 2. **`memory.wait()`** blocks until the async writer and the diary consolidator have committed — only then is the job durably in the outbox.
 3. **`drain_outbox`** pulls the one pending job, runs `fake_model`, and `submit_summary` writes the text into `diary_days` and advances `covered_through`. It returns `1`.
 4. **`inspect(type="diary")`** returns `{"days": [...], "sections": [...]}` — one daily diary, zero sections (section folding only kicks in across day boundaries, when a finalized day is folded into the L2 ring).
@@ -212,7 +225,7 @@ See [Data Flow](../io/data-flow.md) for where these sections land in the assembl
 
 ## Integration checklist
 
-- Enable with `NexusMemory(diary=True)`; tune `update_every`, `section_size`, `max_sections` with an explicit `DiaryConfig` via [Diary Config](../configuration/diary-config.md).
+- Enable with `NexusMemory(diary=True)`; tune `update_every`, `diary_window`, `max_sentences`, `section_size`, `max_sections` with an explicit `DiaryConfig` via [Diary Config](../configuration/diary-config.md).
 - After ingests (and before relying on the outbox), call `memory.wait()` so scheduling has committed.
 - Run a drain loop: `pending_summaries()` → run `job["prompt"]` on your model with `job["prior_summary"]` + `job["input"]` → `submit_summary(job["job_id"], text)`.
 - Drain on your own schedule — a lagging outbox is safe; the diary just trails behind.

@@ -98,10 +98,10 @@ The optional hierarchical diary is **off by default** and is *not* part of `Nexu
 
 ```python
 NexusMemory(diary=True)                                   # defaults
-NexusMemory(diary=DiaryConfig(enabled=True, update_every=5))  # custom
+NexusMemory(diary=DiaryConfig(enabled=True, update_every=3))  # custom (pin pre-0.3.5 cadence)
 ```
 
-Its knobs (`update_every`, `section_size`, `max_sections`, `inject_days`) live in [`DiaryConfig`](./diary-config.md), not here.
+Its knobs (`update_every`, `diary_window`, `max_sentences`, `section_size`, `max_sections`, `inject_days`) live in [`DiaryConfig`](./diary-config.md), not here.
 
 ### Per-request overrides
 
