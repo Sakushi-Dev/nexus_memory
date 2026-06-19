@@ -6,6 +6,7 @@ backward compatible, minor releases add features, major releases may break APIs.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| [0.3.5](0.3.5.md) | 2026-06-19 | Diary rework: assistant first-person prose, `2-N` sentence range, rolling overlapping window (`diary_window`), `max_sentences` knob, config validation; default cadence `update_every` 3 → 5 (pin `=3` to keep) |
 | [0.3.4](0.3.4.md) | 2026-06-19 | Optional `tiktoken` counter via `tokens(config=)`, single shared token heuristic, diary `DAILY_PROMPT` reconciliation clause, examples overhaul |
 | [0.3.3](0.3.3.md) | 2026-06-19 | `NexusMemory.tokens()` section-based token accountant (system/input/output/full), OpenAI-format `basic_usage.py` |
 | [0.3.2](0.3.2.md) | 2026-06-19 | `NexusMemory.history()` native message-history accessor, `drain_diary` warns on silent host failures, `pip install -e .` setup |
