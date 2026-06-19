@@ -32,8 +32,10 @@ from nexus_memory.layers.diary.config import DiaryConfig
 from nexus_memory.layers.diary.scheduler import DiaryScheduler
 from nexus_memory.layers.diary.store import DiaryStore
 
-# Diary parameters: N=3, SECTION_SIZE=7, M=8, K=1.
-N = 3
+# Diary parameters: N=5, diary_window=20, max_sentences=50, SECTION_SIZE=7, M=8, K=1.
+N = 5
+WINDOW = 20  # diary_window (turns); the daily window LIMIT is WINDOW * 2 rows.
+MAX_SENTENCES = 50
 SECTION_SIZE = 7
 M = 8
 K = 1
@@ -142,32 +144,34 @@ def test_off_by_default_no_diary_tables_or_jobs(db_path):
 # 2. daily cadence
 # --------------------------------------------------------------------------- #
 def test_daily_cadence_enqueues_after_n_interactions(db, config):
-    """After N=3 interactions a daily job exists: empty prior_summary, 6 turns, advance_to."""
+    """After N=5 interactions a daily job exists: empty prior_summary, 10 turns, advance_to.
+
+    Counts are N-driven only (the day holds 10 rows, far below the WINDOW*2=40
+    row LIMIT, so the window returns every row).
+    """
     _episodic_ddl(db)
     store = DiaryStore(db)
     scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-06-10")
     day = "2026-06-10"
 
-    # Two interactions: no job yet (count 1, 2 are not multiples of N).
-    _interaction(db, scheduler, day, 1)
-    _interaction(db, scheduler, day, 2)
+    # N-1 interactions: no job yet (counts 1..4 are not multiples of N).
+    for i in range(1, N):
+        _interaction(db, scheduler, day, i)
     assert store.pending_jobs() == []
 
-    # Third interaction crosses the N boundary -> exactly one pending daily job.
-    _interaction(db, scheduler, day, 3)
+    # The Nth interaction crosses the N boundary -> exactly one pending daily job.
+    _interaction(db, scheduler, day, N)
     jobs = store.pending_jobs()
     assert len(jobs) == 1
     job = jobs[0]
     assert job["kind"] == "daily"
     assert job["target"] == day
 
-    # prior_summary is empty on the first roll; input is the 6 turns (3 x user+assistant).
+    # prior_summary is empty on the first roll; input is the 10 turns (5 x user+assistant).
     assert (job["input_obj"]["prior_summary"] or "") == ""
     items = job["input_obj"]["items"]
-    assert len(items) == 6
-    assert [it["role"] for it in items] == [
-        "user", "assistant", "user", "assistant", "user", "assistant",
-    ]
+    assert len(items) == 2 * N
+    assert [it["role"] for it in items] == ["user", "assistant"] * N
     # advance_to == the id of the last (newest) turn.
     assert job["advance_to"] == max(it["id"] for it in items)
 
@@ -175,8 +179,14 @@ def test_daily_cadence_enqueues_after_n_interactions(db, config):
 # --------------------------------------------------------------------------- #
 # 3. apply daily (rolling)
 # --------------------------------------------------------------------------- #
-def test_apply_daily_then_rolling_uses_prior_summary_and_new_turns(db, config):
-    """submit_summary sets summary+covered_through; the next N-tick rolls only NEW turns."""
+def test_apply_daily_then_rolling_uses_prior_summary_and_overlapping_window(db, config):
+    """submit_summary sets summary+covered_through; the next N-tick rolls an OVERLAPPING window.
+
+    The window no longer sends a strict delta: with diary_window=20 (LIMIT 40)
+    the day holds <40 rows, so the second job re-sends ALL rows of the day so far
+    (overlap by design, reconciled via prior_summary + the prompt). The prior
+    summary still flows; covered_through still advances to the day's max.
+    """
     _episodic_ddl(db)
     store = DiaryStore(db)
     scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-06-11")
@@ -201,11 +211,19 @@ def test_apply_daily_then_rolling_uses_prior_summary_and_new_turns(db, config):
     second = store.pending_jobs()[0]
     assert second["kind"] == "daily"
 
-    # prior_summary == the stored summary; input == only the NEW turns (the 6 fresh ones).
+    # prior_summary == the stored summary; the window OVERLAPS — it re-sends the
+    # whole day (all 2*N*2 = 20 rows, < 40 LIMIT), starting from id 1.
     assert second["input_obj"]["prior_summary"] == "Day-one narrative."
     new_items = second["input_obj"]["items"]
-    assert len(new_items) == 6
-    assert min(it["id"] for it in new_items) > first_advance
+    expected_rows = min(WINDOW * 2, 2 * (2 * N))
+    assert len(new_items) == expected_rows
+    assert min(it["id"] for it in new_items) == 1
+    # advance_to is the day's newest id, strictly past the first roll's coverage.
+    assert second["advance_to"] > first_advance
+
+    # Applying the second job advances covered_through to the day's max id.
+    scheduler.submit(second["job_id"], "Day-one narrative, continued.")
+    assert store.get_day(day)["covered_through"] == max(it["id"] for it in new_items)
 
 
 # --------------------------------------------------------------------------- #
@@ -574,12 +592,14 @@ def test_diary_true_matches_default_config_knobs(tmp_path):
     mem = NexusMemory(db_path=str(tmp_path / "b.db"), diary=True)
     try:
         cfg = mem._diary.config
-        assert (cfg.update_every, cfg.section_size, cfg.max_sections, cfg.inject_days) == (
-            N,
-            SECTION_SIZE,
-            M,
-            K,
-        )
+        assert (
+            cfg.update_every,
+            cfg.diary_window,
+            cfg.max_sentences,
+            cfg.section_size,
+            cfg.max_sections,
+            cfg.inject_days,
+        ) == (5, 20, 50, 7, 8, 1)
     finally:
         mem.close()
 
@@ -590,7 +610,7 @@ def test_diary_true_matches_default_config_knobs(tmp_path):
 def test_drain_diary_enabled_applies_pending_jobs(db_path):
     """With the diary ON, drain_diary runs a host model over the enqueued daily job.
 
-    Ingest N=3 interactions (the consolidator ticks the scheduler on each, using
+    Ingest N=5 interactions (the consolidator ticks the scheduler on each, using
     the real UTC day that the freshly inserted turns carry), wait so the writes +
     the diary tick complete, then drain. The deterministic model returns a derived
     non-empty string per job; drain_diary applies it and reports the count.
@@ -652,3 +672,220 @@ def test_drain_diary_off_returns_zero_and_applies_nothing(db_path):
         assert mem.drain_diary(lambda j: "x") == 0
     finally:
         mem.close()
+
+
+# --------------------------------------------------------------------------- #
+# 13. window — caps at diary_window * 2 rows
+# --------------------------------------------------------------------------- #
+def test_window_caps_at_diary_window_times_two_rows(db, config):
+    """When more turns arrive than diary_window AFTER an apply, the window caps at diary_window*2.
+
+    The window's lower edge is ``min(covered_through+1, newest-diary_window*2+1)``:
+    completeness (covered_through+1) wins until a summary is applied, then the cap
+    (diary_window*2) bounds the overlap. So we apply once, then drive more turns.
+    """
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    # Small knobs so the cap bites: diary_window=3 (6 rows), tick every interaction.
+    cfg = DiaryConfig(enabled=True, update_every=1, diary_window=3)
+    scheduler = DiaryScheduler(store, db, cfg, today=lambda: "2026-07-01")
+    day = "2026-07-01"
+
+    # Drive several interactions, applying each time so covered_through stays at
+    # the day's max (the host is keeping up). The cap bites only when the number
+    # of UNcovered rows is below diary_window*2 — then the window pulls back
+    # diary_window*2 rows for overlap rather than just the few uncovered ones.
+    for i in range(1, 6):
+        _interaction(db, scheduler, day, i)
+        job = store.pending_jobs()[0]
+        scheduler.submit(job["job_id"], f"Covered through {job['advance_to']}.")
+
+    # One more interaction -> only 2 uncovered rows, but the window pulls back the
+    # last diary_window*2 = 6 rows for reconciliation overlap.
+    _interaction(db, scheduler, day, 6)
+    job = store.pending_jobs()[0]
+    items = job["input_obj"]["items"]
+    assert len(items) == cfg.diary_window * 2  # 6 — the overlap cap bites
+    # It is the MOST RECENT 6 rows and starts on a turn boundary (user-first).
+    assert items[0]["role"] == "user"
+    assert job["advance_to"] == max(it["id"] for it in items)
+
+
+# --------------------------------------------------------------------------- #
+# 14. window — includes assistant turns
+# --------------------------------------------------------------------------- #
+def test_window_includes_assistant_turns(db, config):
+    """The daily window carries both roles (user AND assistant), not user-only."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-07-02")
+    day = "2026-07-02"
+    for i in range(1, N + 1):
+        _interaction(db, scheduler, day, i)
+
+    items = store.pending_jobs()[0]["input_obj"]["items"]
+    roles = {it["role"] for it in items}
+    assert roles == {"user", "assistant"}
+    assert any(it["role"] == "assistant" for it in items)
+
+
+# --------------------------------------------------------------------------- #
+# 15. window — sends all rows when fewer than the cap
+# --------------------------------------------------------------------------- #
+def test_window_sends_all_when_fewer_than_cap(db, config):
+    """With fewer than diary_window turns, the window returns every row of the day."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-07-03")
+    day = "2026-07-03"
+    for i in range(1, N + 1):
+        _interaction(db, scheduler, day, i)
+
+    items = store.pending_jobs()[0]["input_obj"]["items"]
+    # N interactions = 2*N rows, all below the WINDOW*2 cap -> all returned, from id 1.
+    assert len(items) == 2 * N
+    assert min(it["id"] for it in items) == 1
+
+
+# --------------------------------------------------------------------------- #
+# 16. covered_through / advance_to advance across two rolls
+# --------------------------------------------------------------------------- #
+def test_covered_through_advances_across_two_rolls(db, config):
+    """advance_to >= covered_through after each tick; covered_through climbs across rolls."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-07-04")
+    day = "2026-07-04"
+
+    for i in range(1, N + 1):
+        _interaction(db, scheduler, day, i)
+    first = store.pending_jobs()[0]
+    # Invariant: advance_to is always >= the day's covered_through.
+    assert first["advance_to"] >= store.get_day(day)["covered_through"]
+    scheduler.submit(first["job_id"], "Roll one.")
+    covered_1 = store.get_day(day)["covered_through"]
+    assert covered_1 == first["advance_to"]
+
+    for i in range(N + 1, 2 * N + 1):
+        _interaction(db, scheduler, day, i)
+    second = store.pending_jobs()[0]
+    assert second["advance_to"] >= covered_1
+    scheduler.submit(second["job_id"], "Roll two.")
+    covered_2 = store.get_day(day)["covered_through"]
+    assert covered_2 > covered_1  # the high-water mark climbs
+
+
+# --------------------------------------------------------------------------- #
+# 17. window — a custom diary_window=K is respected
+# --------------------------------------------------------------------------- #
+def test_custom_diary_window_respected(db, config):
+    """diary_window=K caps the overlap window at K*2 rows once a summary is applied."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    cfg = DiaryConfig(enabled=True, update_every=1, diary_window=2)
+    scheduler = DiaryScheduler(store, db, cfg, today=lambda: "2026-07-05")
+    day = "2026-07-05"
+
+    # Keep applying so covered_through tracks the day's max; then one fresh tick
+    # leaves few uncovered rows and the K*2 overlap cap bounds the window.
+    for i in range(1, 5):
+        _interaction(db, scheduler, day, i)
+        job = store.pending_jobs()[0]
+        scheduler.submit(job["job_id"], f"Covered through {job['advance_to']}.")
+
+    _interaction(db, scheduler, day, 5)
+    items = store.pending_jobs()[0]["input_obj"]["items"]
+    assert len(items) == 2 * 2  # diary_window=2 -> 4 rows
+
+
+# --------------------------------------------------------------------------- #
+# 18. max_sentences is formatted into the daily prompt
+# --------------------------------------------------------------------------- #
+def test_max_sentences_formatted_into_prompt(db, config):
+    """The job's prompt carries the configured 2-N sentence range (no leftover braces)."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    cfg = DiaryConfig(enabled=True, update_every=1, max_sentences=7)
+    scheduler = DiaryScheduler(store, db, cfg, today=lambda: "2026-07-06")
+    day = "2026-07-06"
+    _interaction(db, scheduler, day, 1)
+
+    prompt = store.pending_jobs()[0]["prompt"]
+    assert "2-7 sentences" in prompt
+    assert "{max_sentences}" not in prompt
+
+
+# --------------------------------------------------------------------------- #
+# 19. invalid config raises ValueError
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"update_every": 0},
+        {"diary_window": 0},
+        {"section_size": 0},
+        {"max_sections": 0},
+        {"max_sentences": 1},   # floor is 2
+        {"inject_days": -1},    # 0 is allowed, negative is not
+    ],
+)
+def test_invalid_diary_config_raises_value_error(kwargs):
+    """__post_init__ validates the knobs regardless of enabled."""
+    with pytest.raises(ValueError):
+        DiaryConfig(**kwargs)
+
+
+def test_inject_days_zero_is_allowed():
+    """inject_days=0 (inject nothing) is a valid config (B5)."""
+    cfg = DiaryConfig(inject_days=0)
+    assert cfg.inject_days == 0
+
+
+# --------------------------------------------------------------------------- #
+# 20. finalized-but-unfolded day still folds (force guard, B3)
+# --------------------------------------------------------------------------- #
+def test_finalized_unfolded_day_still_folds(db, config):
+    """A finalize() on an already-covered day is NOT short-circuited by the empty-tick guard."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), today=lambda: "2026-07-07")
+    day = "2026-07-07"
+
+    for i in range(1, N + 1):
+        _interaction(db, scheduler, day, i)
+    # Apply the cadence job so covered_through == the day's max (nothing "new").
+    job = store.pending_jobs()[0]
+    scheduler.submit(job["job_id"], "Covered narrative.")
+    assert store.get_day(day)["covered_through"] == job["advance_to"]
+    assert store.pending_jobs() == []
+
+    # finalize() must still enqueue a daily job (force=True), despite no new turns,
+    # so the finalized-but-unfolded day is never stranded.
+    scheduler.finalize()
+    pend = store.pending_jobs()
+    assert len(pend) == 1 and pend[0]["kind"] == "daily"
+    assert store.get_day(day)["finalized"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# 21. lone trailing user row does not crash (B7 turn-boundary trim)
+# --------------------------------------------------------------------------- #
+def test_lone_trailing_user_row_no_crash(db, config):
+    """A direct user row with no assistant reply does not break the window read."""
+    _episodic_ddl(db)
+    store = DiaryStore(db)
+    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True, update_every=1),
+                               today=lambda: "2026-07-08")
+    day = "2026-07-08"
+
+    # A full interaction, then a LONE trailing user row (odd row count).
+    _interaction(db, scheduler, day, 1)
+    _insert_turn(db, "user", "lone user", day, "05:00:00")
+    scheduler.on_interaction(day=day)  # must not raise
+
+    job = store.pending_jobs()[0]
+    items = job["input_obj"]["items"]
+    # The window still starts on a turn boundary and includes the lone user row.
+    assert items[0]["role"] == "user"
+    assert any(it["content"] == "lone user" for it in items)
+    assert job["advance_to"] == max(it["id"] for it in items)
