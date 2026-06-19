@@ -42,6 +42,7 @@ from ..layers.procedural.procedural import DirectiveDetector, MockDirectiveDetec
 from ..layers.semantic.reader import MemoryReader
 from ..layers.episodic.summarization import MockSummarizer, Summarizer
 from .transparency import TransparencyInterface
+from .xml_format import estimate_tokens
 from ..layers.working.working import WorkingMemory
 from ..layers.semantic.writer import MemoryWriter
 
@@ -627,6 +628,93 @@ class NexusMemory:
             template.format(role=t.get("role", ""), content=t.get("content", ""))
             for t in turns
         )
+
+    def tokens(
+        self,
+        scope: "str | list[str]" = "full",
+        *,
+        messages: "list[dict] | None" = None,
+        response: str | None = None,
+        counter: "Callable[[str], int] | None" = None,
+    ) -> "int | dict[str, int]":
+        """Count tokens over the actual LLM round-trip, classified by section.
+
+        Counts the real request you send (the OpenAI-style ``messages`` array)
+        plus the model's ``response`` — i.e. exactly what crosses the wire — and
+        splits it by section, NOT by storage layer:
+
+        * **system** — the full system message(s): the host's base prompt *and*
+          everything Nexus injects into it (``directives`` + ``facts``). The
+          recalled facts/directives live inside the system message, so they count
+          here, not under ``input``.
+        * **input** — the rest of the prompt: every ``user``/``assistant`` message
+          (the conversation history plus the current user turn). Everything except
+          the system message.
+        * **output** — the model's ``response`` (the new completion).
+
+        This is section-based on purpose: ``system`` is whatever you put in the
+        ``role: "system"`` entry — Nexus does not have to own the base prompt to
+        count it, because you hand it the array you actually sent.
+
+        Scopes (a string, or a list for a per-scope breakdown):
+
+        ==========  =====================================================
+        scope       counts
+        ==========  =====================================================
+        ``system``  all ``role == "system"`` message content
+        ``input``   all ``role in ("user", "assistant")`` message content
+        ``output``  the ``response`` text (the model's completion)
+        ``full``    ``system`` + ``input`` + ``output`` (default)
+        ==========  =====================================================
+
+        Args:
+            scope: One scope name, or a list of them.
+            messages: The request array you send the LLM (``[{role, content}]``).
+                Required for ``system``/``input``/``full``; ``[]`` if omitted.
+            response: The model's reply text (the ``output``); ``""`` if omitted.
+            counter: How to count — a ``(str) -> int`` callable. Defaults to the
+                shared ``len(s) // 4`` heuristic (same one ``history(max_tokens=)``
+                uses); pass a real tokenizer (e.g. ``tiktoken``) for exact counts.
+
+        Returns:
+            An ``int`` for a single scope; for a list, a ``{scope: int}`` dict
+            with an extra ``"total"`` key (the sum of the listed scopes).
+        """
+        count = counter or estimate_tokens
+        single = isinstance(scope, str)
+        requested = [scope] if single else list(scope)
+
+        valid = {"system", "input", "output", "full"}
+        unknown = [s for s in requested if s not in valid]
+        if unknown:
+            raise ValueError(
+                f"unknown token scope(s): {unknown}; valid scopes: {sorted(valid)}"
+            )
+
+        msgs = messages or []
+        system_tokens = sum(
+            count(m.get("content", "")) for m in msgs if m.get("role") == "system"
+        )
+        input_tokens = sum(
+            count(m.get("content", ""))
+            for m in msgs
+            if m.get("role") in ("user", "assistant")
+        )
+        output_tokens = count(response or "")
+
+        def value(name: str) -> int:
+            return {
+                "system": system_tokens,
+                "input": input_tokens,
+                "output": output_tokens,
+                "full": system_tokens + input_tokens + output_tokens,
+            }[name]
+
+        if single:
+            return value(scope)
+        out = {name: value(name) for name in requested}
+        out["total"] = sum(out.values())
+        return out
 
     def distill(self) -> dict:
         """Promote standing-preference semantic facts into procedural rules.
