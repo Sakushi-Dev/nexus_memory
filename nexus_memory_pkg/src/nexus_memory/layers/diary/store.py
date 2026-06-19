@@ -1,7 +1,7 @@
 """Persistence for the diary layer (Layer V) — the 3 tables + the outbox.
 
-:class:`DiaryStore` owns the three diary tables (``diary_days``,
-``persistent_sections``, ``summarization_jobs``). Like the other layer stores
+:class:`DiaryStore` owns the three diary tables (``diary_sessions``,
+``persistent_summary``, ``summarization_jobs``). Like the other layer stores
 (see :class:`~nexus_memory.layers.episodic.episodic.EpisodicStore`), it
 does NOT own the connection lifecycle — :class:`~nexus_memory.core.db.NexusDB`
 does. The store creates its own tables with ``CREATE TABLE IF NOT EXISTS`` on
@@ -31,35 +31,35 @@ logger = logging.getLogger(__name__)
 # Idempotent DDL for this layer's three tables. Created on
 # construction, only ever when the diary layer is active.
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS diary_days (
-    period            TEXT PRIMARY KEY,      -- 'YYYY-MM-DD' (UTC day, matches turn timestamps)
-    summary           TEXT DEFAULT '',       -- latest narrative for the day
-    covered_through   INTEGER DEFAULT 0,     -- last-APPLIED high-water mark (max episodic_turns.id folded in); no longer gates the rolling window, only the empty-tick guard
-    interaction_count INTEGER DEFAULT 0,     -- interactions seen this day
-    finalized         INTEGER DEFAULT 0,     -- 1 once the day is closed (rollover/close)
-    folded            INTEGER DEFAULT 0,     -- 1 once folded into a persistent section
+CREATE TABLE IF NOT EXISTS diary_sessions (
+    session_id        TEXT PRIMARY KEY,      -- the orchestrator.session_id (uuid4) of the session
+    seq               INTEGER UNIQUE,        -- monotonic order (1,2,3…); orders current/previous + the 6-fold
+    summary           TEXT DEFAULT '',       -- the session narrative (rolling)
+    covered_through   INTEGER DEFAULT 0,     -- last-APPLIED high-water mark (max episodic_turns.id folded in)
+    interaction_count INTEGER DEFAULT 0,     -- interactions seen this session
+    finalized         INTEGER DEFAULT 0,     -- 1 once the session is closed (rollover/close)
+    folded            INTEGER DEFAULT 0,     -- 1 once folded into the persistent summary
+    created_at        TEXT,
     updated_at        TEXT
 );
 
-CREATE TABLE IF NOT EXISTS persistent_sections (
-    slot        INTEGER PRIMARY KEY,         -- 0 .. M-1 (physical ring slot)
-    seq         INTEGER,                     -- monotonic logical order (higher = newer)
-    summary     TEXT DEFAULT '',
-    diary_count INTEGER DEFAULT 0,           -- daily diaries folded so far (0..SECTION_SIZE)
-    first_day   TEXT,                        -- coverage range
-    last_day    TEXT,
-    frozen      INTEGER DEFAULT 0,           -- 1 once diary_count == SECTION_SIZE
-    updated_at  TEXT
+CREATE TABLE IF NOT EXISTS persistent_summary (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
+    summary       TEXT DEFAULT '',                     -- the single growing summary
+    session_count INTEGER DEFAULT 0,                   -- sessions folded so far
+    first_session TEXT,                                -- covered range (session_id)
+    last_session  TEXT,
+    updated_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS summarization_jobs (
     job_id          TEXT PRIMARY KEY,        -- uuid4
-    kind            TEXT NOT NULL,           -- 'daily' | 'section'
-    target          TEXT NOT NULL,           -- daily: the 'YYYY-MM-DD'; section: the seq as text
+    kind            TEXT NOT NULL,           -- 'session' | 'summary'
+    target          TEXT NOT NULL,           -- session: the session_id; summary: constant '1' (singleton)
     status          TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'done' | 'superseded'
     prompt          TEXT NOT NULL,           -- Nexus-owned instruction (host forwards verbatim)
     input_json      TEXT NOT NULL,           -- JSON: {prior_summary, items:[...]}
-    advance_to      INTEGER,                 -- daily: covered_through to set on apply; section: day folded
+    advance_to      INTEGER,                 -- session: covered_through to set on apply; summary: NULL
     created_at      TEXT NOT NULL,
     answered_at     TEXT
 );
@@ -92,226 +92,195 @@ class DiaryStore:
         logger.debug("DiaryStore initialized (3 tables ensured).")
 
     # ================================================================== #
-    # diary_days (L1)
+    # diary_sessions (per-session narrative)
     # ================================================================== #
-    def get_day(self, period: str) -> dict | None:
-        """Return the ``diary_days`` row for ``period``, or ``None``."""
+    def get_session(self, session_id: str) -> dict | None:
+        """Return the ``diary_sessions`` row for ``session_id``, or ``None``."""
         row = self.db.conn.execute(
-            "SELECT * FROM diary_days WHERE period = ?", (period,)
+            "SELECT * FROM diary_sessions WHERE session_id = ?", (session_id,)
         ).fetchone()
         return dict(row) if row is not None else None
 
-    def upsert_day(self, period: str) -> None:
-        """INSERT OR IGNORE a default day row (``interaction_count = 0``)."""
+    def upsert_session(self, session_id: str) -> None:
+        """INSERT a default session row if new, assigning ``seq = max_seq+1``.
+
+        Idempotent: an existing session is left untouched (its ``seq`` and
+        counters are preserved). New sessions get the next monotonic ``seq`` so
+        ``current``/``previous`` order and the fold trigger are well-defined.
+        """
         with self.db.lock:
+            existing = self.db.conn.execute(
+                "SELECT 1 FROM diary_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if existing is not None:
+                return
+            seq_row = self.db.conn.execute(
+                "SELECT MAX(seq) AS s FROM diary_sessions"
+            ).fetchone()
+            next_seq = (int(seq_row["s"]) if seq_row["s"] is not None else 0) + 1
+            now = _utc_now_str()
             self.db.conn.execute(
-                "INSERT OR IGNORE INTO diary_days "
-                "(period, summary, covered_through, interaction_count, finalized, folded, updated_at) "
-                "VALUES (?, '', 0, 0, 0, 0, ?)",
-                (period, _utc_now_str()),
+                "INSERT INTO diary_sessions "
+                "(session_id, seq, summary, covered_through, interaction_count, "
+                " finalized, folded, created_at, updated_at) "
+                "VALUES (?, ?, '', 0, 0, 0, 0, ?, ?)",
+                (session_id, next_seq, now, now),
             )
             self.db.conn.commit()
 
-    def bump_interaction(self, period: str) -> int:
-        """Increment ``interaction_count`` for the day and return the NEW count."""
+    def bump_interaction(self, session_id: str) -> int:
+        """Increment ``interaction_count`` for the session; return the NEW count."""
         with self.db.lock:
             self.db.conn.execute(
-                "UPDATE diary_days SET interaction_count = interaction_count + 1 "
-                "WHERE period = ?",
-                (period,),
+                "UPDATE diary_sessions SET interaction_count = interaction_count + 1 "
+                "WHERE session_id = ?",
+                (session_id,),
             )
             self.db.conn.commit()
             row = self.db.conn.execute(
-                "SELECT interaction_count FROM diary_days WHERE period = ?",
-                (period,),
+                "SELECT interaction_count FROM diary_sessions WHERE session_id = ?",
+                (session_id,),
             ).fetchone()
         return int(row["interaction_count"])
 
-    def set_day_summary(self, period: str, summary: str, covered_through: int) -> None:
-        """Set the day's ``summary`` + ``covered_through`` (and ``updated_at``).
+    def set_session_summary(
+        self, session_id: str, summary: str, covered_through: int
+    ) -> None:
+        """Set the session's ``summary`` + ``covered_through`` (and ``updated_at``).
 
         ``covered_through`` is a monotonic last-APPLIED high-water mark
         (``advance_to = max(id in window)`` from the applied job). It no longer
-        gates the rolling daily window (the overlapping window does that); it is
-        kept so day finalization/folding still terminate and so the scheduler's
-        empty-tick guard can tell when nothing new was ingested since the last
-        apply.
+        gates the rolling session window (the overlapping window does that); it is
+        kept so session finalization/folding still terminate and so the
+        scheduler's empty-tick guard can tell when nothing new was ingested since
+        the last apply.
         """
         with self.db.lock:
             self.db.conn.execute(
-                "UPDATE diary_days SET summary = ?, covered_through = ?, updated_at = ? "
-                "WHERE period = ?",
-                (summary, covered_through, _utc_now_str(), period),
+                "UPDATE diary_sessions SET summary = ?, covered_through = ?, updated_at = ? "
+                "WHERE session_id = ?",
+                (summary, covered_through, _utc_now_str(), session_id),
             )
             self.db.conn.commit()
 
-    def finalize_day(self, period: str) -> None:
-        """Mark the day ``finalized = 1``."""
+    def finalize_session(self, session_id: str) -> None:
+        """Mark the session ``finalized = 1``."""
         with self.db.lock:
             self.db.conn.execute(
-                "UPDATE diary_days SET finalized = 1 WHERE period = ?", (period,)
+                "UPDATE diary_sessions SET finalized = 1 WHERE session_id = ?",
+                (session_id,),
             )
             self.db.conn.commit()
 
-    def mark_folded(self, period: str) -> None:
-        """Mark the day ``folded = 1`` (folded into a persistent section)."""
+    def mark_folded(self, session_id: str) -> None:
+        """Mark the session ``folded = 1`` (folded into the persistent summary)."""
         with self.db.lock:
             self.db.conn.execute(
-                "UPDATE diary_days SET folded = 1 WHERE period = ?", (period,)
+                "UPDATE diary_sessions SET folded = 1 WHERE session_id = ?",
+                (session_id,),
             )
             self.db.conn.commit()
 
-    def max_day(self) -> str | None:
-        """Return ``MAX(period)`` across ``diary_days``, or ``None`` if empty."""
+    def max_seq_session(self) -> dict | None:
+        """Return the session row with the highest ``seq``, or ``None`` if empty."""
         row = self.db.conn.execute(
-            "SELECT MAX(period) AS p FROM diary_days"
+            "SELECT * FROM diary_sessions ORDER BY seq DESC LIMIT 1"
         ).fetchone()
-        return row["p"] if row is not None and row["p"] is not None else None
+        return dict(row) if row is not None else None
 
-    def days(self) -> list[dict]:
-        """Return all ``diary_days`` rows, ``period`` ascending."""
+    def sessions(self) -> list[dict]:
+        """Return all ``diary_sessions`` rows, ``seq`` ascending."""
         rows = self.db.conn.execute(
-            "SELECT * FROM diary_days ORDER BY period ASC"
+            "SELECT * FROM diary_sessions ORDER BY seq ASC"
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def finalized_unfolded_days(self) -> list[dict]:
-        """Return finalized, not-yet-folded days, ``period`` ascending."""
+    def finalized_unfolded_sessions(self) -> list[dict]:
+        """Return finalized, not-yet-folded sessions, ``seq`` ascending."""
         rows = self.db.conn.execute(
-            "SELECT * FROM diary_days WHERE finalized = 1 AND folded = 0 "
-            "ORDER BY period ASC"
+            "SELECT * FROM diary_sessions WHERE finalized = 1 AND folded = 0 "
+            "ORDER BY seq ASC"
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def finalized_days_before(self, day: str, limit: int) -> list[dict]:
-        """Return the newest ``limit`` finalized days strictly before ``day``.
+    def previous_finalized_sessions(self, current_id: str, limit: int) -> list[dict]:
+        """Return the newest ``limit`` finalized sessions before ``current_id``.
 
-        Only days with a non-empty summary are considered. The newest ``limit``
-        such days are selected, then returned in chronological (``period`` ASC)
-        order.
+        "Before" is by monotonic ``seq`` (strictly less than the current
+        session's ``seq``; if the current session has no row yet, all finalized
+        sessions qualify). Only sessions with a non-empty summary are considered.
+        The newest ``limit`` such sessions are selected, then returned in
+        chronological (``seq`` ASC) order.
         """
-        rows = self.db.conn.execute(
-            "SELECT * FROM diary_days "
-            "WHERE finalized = 1 AND period < ? AND summary != '' "
-            "ORDER BY period DESC LIMIT ?",
-            (day, limit),
-        ).fetchall()
+        cur = self.db.conn.execute(
+            "SELECT seq FROM diary_sessions WHERE session_id = ?", (current_id,)
+        ).fetchone()
+        cur_seq = cur["seq"] if cur is not None and cur["seq"] is not None else None
+        if cur_seq is None:
+            rows = self.db.conn.execute(
+                "SELECT * FROM diary_sessions "
+                "WHERE finalized = 1 AND summary != '' "
+                "ORDER BY seq DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = self.db.conn.execute(
+                "SELECT * FROM diary_sessions "
+                "WHERE finalized = 1 AND seq < ? AND summary != '' "
+                "ORDER BY seq DESC LIMIT ?",
+                (cur_seq, limit),
+            ).fetchall()
         # Selected newest-first; present chronologically.
         return [dict(r) for r in reversed(rows)]
 
     # ================================================================== #
-    # persistent_sections (L2 ring of M slots)
+    # persistent_summary (single growing row)
     # ================================================================== #
-    def open_section(self) -> dict | None:
-        """Return the single open (``frozen = 0``) section row, or ``None``."""
+    def get_summary(self) -> dict | None:
+        """Return the singleton ``persistent_summary`` row, or ``None`` if empty."""
         row = self.db.conn.execute(
-            "SELECT * FROM persistent_sections WHERE frozen = 0 "
-            "ORDER BY seq DESC LIMIT 1"
+            "SELECT * FROM persistent_summary WHERE id = 1"
         ).fetchone()
         return dict(row) if row is not None else None
 
-    def get_section_by_seq(self, seq: int) -> dict | None:
-        """Return the section row with logical order ``seq``, or ``None``."""
-        row = self.db.conn.execute(
-            "SELECT * FROM persistent_sections WHERE seq = ?", (seq,)
-        ).fetchone()
-        return dict(row) if row is not None else None
+    def upsert_summary(self, summary: str, folded_sessions: list[dict]) -> None:
+        """Create or extend the single persistent summary row.
 
-    def max_seq(self) -> int:
-        """Return ``MAX(seq)`` across sections, or ``0`` if none."""
-        row = self.db.conn.execute(
-            "SELECT MAX(seq) AS s FROM persistent_sections"
-        ).fetchone()
-        return int(row["s"]) if row is not None and row["s"] is not None else 0
-
-    def allocate_section(self, max_sections: int) -> dict:
-        """Allocate a new open section and return its row.
-
-        ``seq = max_seq() + 1``. A FREE physical slot in ``[0, max_sections)`` is
-        used if one exists; otherwise the row with the smallest ``seq`` (oldest)
-        is OVERWRITTEN (reset to an empty open section). Ring capacity is
-        ``max_sections`` (= ``DiaryConfig.max_sections``, passed by the scheduler).
+        Sets ``summary`` to ``summary`` (the host-supplied extension), bumps
+        ``session_count`` by ``len(folded_sessions)``, sets ``first_session`` to
+        the oldest folded session (only when not already set) and ``last_session``
+        to the newest folded session. ``folded_sessions`` are the session rows
+        being folded, ``seq`` ascending.
         """
-        new_seq = self.max_seq() + 1
+        if not folded_sessions:
+            return
+        first = folded_sessions[0]["session_id"]
+        last = folded_sessions[-1]["session_id"]
+        count = len(folded_sessions)
         now = _utc_now_str()
         with self.db.lock:
-            used = {
-                int(r["slot"])
-                for r in self.db.conn.execute(
-                    "SELECT slot FROM persistent_sections"
-                ).fetchall()
-            }
-            free_slot: int | None = None
-            for candidate in range(max_sections):
-                if candidate not in used:
-                    free_slot = candidate
-                    break
-
-            if free_slot is not None:
-                self.db.conn.execute(
-                    "INSERT INTO persistent_sections "
-                    "(slot, seq, summary, diary_count, first_day, last_day, frozen, updated_at) "
-                    "VALUES (?, ?, '', 0, NULL, NULL, 0, ?)",
-                    (free_slot, new_seq, now),
-                )
-                slot = free_slot
-            else:
-                # Overwrite the oldest (smallest seq) slot.
-                victim = self.db.conn.execute(
-                    "SELECT slot FROM persistent_sections ORDER BY seq ASC LIMIT 1"
-                ).fetchone()
-                slot = int(victim["slot"])
-                self.db.conn.execute(
-                    "UPDATE persistent_sections SET "
-                    "seq = ?, summary = '', diary_count = 0, "
-                    "first_day = NULL, last_day = NULL, frozen = 0, updated_at = ? "
-                    "WHERE slot = ?",
-                    (new_seq, now, slot),
-                )
-            self.db.conn.commit()
-            row = self.db.conn.execute(
-                "SELECT * FROM persistent_sections WHERE slot = ?", (slot,)
+            existing = self.db.conn.execute(
+                "SELECT 1 FROM persistent_summary WHERE id = 1"
             ).fetchone()
-        return dict(row)
-
-    def apply_section(self, slot: int, summary: str, day: str) -> None:
-        """Fold one day into a section: set summary, bump count, extend range.
-
-        ``diary_count += 1``; ``first_day = min(first_day, day)`` (or ``day`` when
-        NULL); ``last_day = max(last_day, day)`` (or ``day`` when NULL);
-        ``updated_at = now``.
-        """
-        with self.db.lock:
-            self.db.conn.execute(
-                "UPDATE persistent_sections SET "
-                "summary = ?, "
-                "diary_count = diary_count + 1, "
-                "first_day = CASE WHEN first_day IS NULL OR ? < first_day "
-                "               THEN ? ELSE first_day END, "
-                "last_day  = CASE WHEN last_day IS NULL OR ? > last_day "
-                "               THEN ? ELSE last_day END, "
-                "updated_at = ? "
-                "WHERE slot = ?",
-                (summary, day, day, day, day, _utc_now_str(), slot),
-            )
+            if existing is None:
+                self.db.conn.execute(
+                    "INSERT INTO persistent_summary "
+                    "(id, summary, session_count, first_session, last_session, updated_at) "
+                    "VALUES (1, ?, ?, ?, ?, ?)",
+                    (summary, count, first, last, now),
+                )
+            else:
+                self.db.conn.execute(
+                    "UPDATE persistent_summary SET "
+                    "summary = ?, "
+                    "session_count = session_count + ?, "
+                    "first_session = COALESCE(first_session, ?), "
+                    "last_session = ?, "
+                    "updated_at = ? "
+                    "WHERE id = 1",
+                    (summary, count, first, last, now),
+                )
             self.db.conn.commit()
-
-    def freeze_section(self, slot: int) -> None:
-        """Mark a section ``frozen = 1`` (capacity reached)."""
-        with self.db.lock:
-            self.db.conn.execute(
-                "UPDATE persistent_sections SET frozen = 1 WHERE slot = ?", (slot,)
-            )
-            self.db.conn.commit()
-
-    def sections(self) -> list[dict]:
-        """Return live sections (``diary_count > 0`` OR ``frozen = 1``), seq ASC."""
-        rows = self.db.conn.execute(
-            "SELECT * FROM persistent_sections "
-            "WHERE diary_count > 0 OR frozen = 1 "
-            "ORDER BY seq ASC"
-        ).fetchall()
-        return [dict(r) for r in rows]
 
     # ================================================================== #
     # summarization_jobs (outbox)
@@ -362,11 +331,11 @@ class DiaryStore:
         rows = self.db.conn.execute(sql, params).fetchall()
         return [self._job_row_to_dict(r) for r in rows]
 
-    def pending_section_job(self) -> dict | None:
-        """Return the single pending ``kind='section'`` job, if any."""
+    def pending_summary_job(self) -> dict | None:
+        """Return the single pending ``kind='summary'`` job, if any."""
         row = self.db.conn.execute(
             "SELECT * FROM summarization_jobs "
-            "WHERE status = 'pending' AND kind = 'section' "
+            "WHERE status = 'pending' AND kind = 'summary' "
             "ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
         return self._job_row_to_dict(row) if row is not None else None

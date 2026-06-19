@@ -18,7 +18,7 @@ imports or calls any LLM SDK.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .consolidator import DiaryConsolidator
 from .models import PendingSummariesRequest, SubmitSummaryRequest
@@ -43,6 +43,8 @@ class DiaryLayer:
             ``episodic_turns`` directly via the shared connection).
         diary_config: The diary's own :class:`DiaryConfig` (``enabled`` must be
             True for this layer to be constructed).
+        session: Zero-arg callable returning the current ``session_id`` (the
+            orchestrator injects ``lambda: self.session_id``).
     """
 
     def __init__(
@@ -50,15 +52,16 @@ class DiaryLayer:
         db: "NexusDB",
         episodic: "EpisodicStore",
         diary_config: "DiaryConfig",
+        session: "Callable[[], str]",
     ) -> None:
         self.db = db
         self.episodic = episodic
         self.config = diary_config
 
         self.store = DiaryStore(db)
-        self.scheduler = DiaryScheduler(self.store, db, diary_config)
+        self.scheduler = DiaryScheduler(self.store, db, diary_config, session)
         self.consolidator = DiaryConsolidator(self.scheduler)
-        self.provider = DiaryContextProvider(self.store, diary_config)
+        self.provider = DiaryContextProvider(self.store, diary_config, session)
         logger.debug("DiaryLayer constructed (diary layer active).")
 
     # ------------------------------------------------------------------ #
@@ -97,7 +100,7 @@ class DiaryLayer:
         return {
             "job_id": job["job_id"],
             "kind": job["kind"],
-            "period": job["target"] if job["kind"] == "daily" else None,
+            "session": job["target"] if job["kind"] == "session" else None,
             "prompt": job["prompt"],
             "prior_summary": input_obj.get("prior_summary"),
             "input": input_obj.get("items", []),
@@ -130,5 +133,8 @@ class DiaryLayer:
         self.scheduler.finalize()
 
     def state(self) -> dict:
-        """Read view for ``inspect(type="diary")`` → ``{days, sections}``."""
-        return {"days": self.store.days(), "sections": self.store.sections()}
+        """Read view for ``inspect(type="diary")`` → ``{sessions, summary}``."""
+        return {
+            "sessions": self.store.sessions(),
+            "summary": self.store.get_summary(),
+        }
