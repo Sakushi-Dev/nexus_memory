@@ -42,7 +42,7 @@ from ..layers.procedural.procedural import DirectiveDetector, MockDirectiveDetec
 from ..layers.semantic.reader import MemoryReader
 from ..layers.episodic.summarization import MockSummarizer, Summarizer
 from .transparency import TransparencyInterface
-from .xml_format import estimate_tokens
+from .xml_format import estimate_tokens, resolve_counter
 from ..layers.working.working import WorkingMemory
 from ..layers.semantic.writer import MemoryWriter
 
@@ -552,7 +552,8 @@ class NexusMemory:
             ``max_turns`` when both are given.
         token_counter:
             Optional ``(str) -> int`` used in tokens mode. Defaults to the
-            ``len(s) // 4`` heuristic (matching ``WorkingMemory.token_estimate``).
+            shared :func:`~nexus_memory.core.xml_format.estimate_tokens`
+            heuristic (``len(s) // 4``), the same counter :meth:`tokens` uses.
         as_format:
             ``"messages"`` → ``[{role, content}]`` (default); ``"turns"`` →
             ``[{role, content, timestamp}]``; ``"string"`` → a newline-joined
@@ -598,7 +599,7 @@ class NexusMemory:
         elif mode == "turns":
             turns = turns[-budget:]
         else:  # tokens — keep the newest suffix that fits the budget.
-            counter = token_counter or (lambda s: len(s) // 4)
+            counter = token_counter or estimate_tokens
             kept: list[dict] = []
             total = 0
             for t in reversed(turns):
@@ -635,7 +636,7 @@ class NexusMemory:
         *,
         messages: "list[dict] | None" = None,
         response: str | None = None,
-        counter: "Callable[[str], int] | None" = None,
+        config: object = None,
     ) -> "int | dict[str, int]":
         """Count tokens over the actual LLM round-trip, classified by section.
 
@@ -672,15 +673,19 @@ class NexusMemory:
             messages: The request array you send the LLM (``[{role, content}]``).
                 Required for ``system``/``input``/``full``; ``[]`` if omitted.
             response: The model's reply text (the ``output``); ``""`` if omitted.
-            counter: How to count — a ``(str) -> int`` callable. Defaults to the
-                shared ``len(s) // 4`` heuristic (same one ``history(max_tokens=)``
-                uses); pass a real tokenizer (e.g. ``tiktoken``) for exact counts.
+            config: How to count, resolved by
+                :func:`~nexus_memory.core.xml_format.resolve_counter`. ``None``
+                (default) uses the offline ``len(s) // 4`` heuristic; ``"tiktoken"``
+                or a model name (e.g. ``"gpt-4o"``) uses the optional **tiktoken**
+                backend for exact counts; a ``(str) -> int`` callable is used as-is;
+                a ``{"model"|"encoding": ...}`` dict selects a specific encoding.
+                Requesting tiktoken without it installed raises ``ImportError``.
 
         Returns:
             An ``int`` for a single scope; for a list, a ``{scope: int}`` dict
             with an extra ``"total"`` key (the sum of the listed scopes).
         """
-        count = counter or estimate_tokens
+        count = resolve_counter(config)
         single = isinstance(scope, str)
         requested = [scope] if single else list(scope)
 

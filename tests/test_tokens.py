@@ -105,12 +105,40 @@ def test_partial_list_total_excludes_unlisted_scopes(memory):
     assert out["total"] < memory.tokens("full", messages=MESSAGES, response=RESPONSE)
 
 
-def test_custom_counter_one_per_message(memory):
-    """A counter of 1/string makes system/input the message counts."""
+def test_config_callable_one_per_message(memory):
+    """config= accepts a (str)->int callable: 1/string => message counts."""
     one = lambda s: 1  # noqa: E731 - terse deterministic counter
-    assert memory.tokens("system", messages=MESSAGES, counter=one) == 1  # 1 system msg
-    assert memory.tokens("input", messages=MESSAGES, counter=one) == 3   # 3 user/assistant
-    assert memory.tokens("output", response=RESPONSE, counter=one) == 1
+    assert memory.tokens("system", messages=MESSAGES, config=one) == 1  # 1 system msg
+    assert memory.tokens("input", messages=MESSAGES, config=one) == 3   # 3 user/assistant
+    assert memory.tokens("output", response=RESPONSE, config=one) == 1
+
+
+# --------------------------------------------------------------------------- #
+# config= selects the counting method (default heuristic vs optional tiktoken)
+# --------------------------------------------------------------------------- #
+def test_config_none_is_the_len4_heuristic(memory):
+    """config=None (default) is the offline len(s)//4 heuristic."""
+    assert memory.tokens("input", messages=MESSAGES, config=None) == memory.tokens(
+        "input", messages=MESSAGES
+    )
+    assert memory.tokens("input", messages=MESSAGES) == sum(
+        estimate_tokens(m["content"])
+        for m in MESSAGES
+        if m["role"] in ("user", "assistant")
+    )
+
+
+def test_config_tiktoken_when_available(memory):
+    """config='tiktoken' uses the real tokenizer (skipped if not installed)."""
+    pytest.importorskip("tiktoken")
+    n = memory.tokens("input", messages=MESSAGES, config="tiktoken")
+    assert isinstance(n, int) and n > 0
+
+
+def test_config_bad_type_raises(memory):
+    """A config that is neither None/callable/str/dict is a TypeError."""
+    with pytest.raises(TypeError):
+        memory.tokens("input", messages=MESSAGES, config=123)
 
 
 # --------------------------------------------------------------------------- #
