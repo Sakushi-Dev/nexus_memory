@@ -484,7 +484,6 @@ a { color: inherit; text-decoration: none; }
 .io-legend .muted { color: var(--faint); }
 .io-legend .sw { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 8px; border-top: 2px solid var(--accent); }
 .io-legend .sw.d { border-top: 2px dashed var(--l5); }
-@media (max-width: 760px) { .io-fig { overflow-x: auto; } .io-fig svg { min-width: 720px; } }
 
 /* ----------------------------------------------------------------- tech --- */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 36px; }
@@ -516,7 +515,6 @@ a { color: inherit; text-decoration: none; }
 .formula-grid .formula { margin-top: 0; padding: 16px 18px; display: flex; flex-direction: column; justify-content: center; }
 .formula-grid .formula .f math { font-size: 1.25em; }
 .formula.hero { margin-top: 14px; }
-@media (max-width: 760px) { .formula-grid { grid-template-columns: 1fr; } }
 
 /* ----------------------------------------------------------------- cta ---- */
 .cta-box {
@@ -565,25 +563,7 @@ a { color: inherit; text-decoration: none; }
 [data-reveal].in { opacity: 1; transform: none; }
 
 /* ------------------------------------------------------------ responsive -- */
-@media (max-width: 900px) {
-  .hero-grid, .arch-grid, .showcase-grid { grid-template-columns: 1fr; }
-  .features-grid { grid-template-columns: 1fr 1fr; }
-  .stats { grid-template-columns: 1fr 1fr; }
-  .tech-list { grid-template-columns: 1fr; }
-  .transfer { position: static; }
-  .nav-inner { display: flex; }
-  .nav-links {
-    position: fixed; inset: 64px 12px auto 12px; flex-direction: column; align-items: flex-start; gap: 6px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: none;
-  }
-  .nav-links.open { display: flex; }
-  .nav-links a { padding: 8px 6px; width: 100%; }
-  .nav-toggle { display: inline-grid; place-items: center; width: 40px; height: 38px; margin-left: auto; border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 10px; cursor: pointer; }
-  .nav-toggle span, .nav-toggle span::before, .nav-toggle span::after { content: ""; display: block; width: 18px; height: 2px; background: var(--text); transition: .2s; }
-  .nav-toggle span::before { transform: translateY(-5px); } .nav-toggle span::after { transform: translateY(3px); }
-  .nav-cta .btn:not(.icon) { display: none; }
-}
-@media (max-width: 560px) {
-  .features-grid, .stats { grid-template-columns: 1fr; }
-  .section { padding: 70px 0; }
-}
+/* All viewport-width mobile breakpoints live in css/responsive/ (layout.css
+   for the structural skeleton; base/sections/mobile-lite for the rest).
+   Only the prefers-reduced-motion (a11y) and the 1200px marquee-bleed guard
+   above remain here as they are not phone-format rules. */

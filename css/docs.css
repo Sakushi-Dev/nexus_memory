@@ -106,4 +106,19 @@
   .side-toggle { display: inline-grid; place-items: center; width: 40px; height: 38px; border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 10px; cursor: pointer; }
   .side-toggle span, .side-toggle span::before, .side-toggle span::after { content: ""; display: block; width: 18px; height: 2px; background: var(--text); position: relative; }
   .side-toggle span::before { position: absolute; top: -5px; } .side-toggle span::after { position: absolute; top: 5px; }
+
+  /* top bar: tighten so the toggle + brand + actions fit a narrow viewport */
+  .docs-top { padding: 12px 16px; gap: 12px; }
+  .docs-top-actions { gap: 8px; }
+}
+
+/* the brand logo already links Home, so the ghost text links are redundant on
+   phones — drop them and keep the primary GitHub action; trim the subtitle. */
+@media (max-width: 600px) {
+  .docs-top-actions .btn-ghost { display: none; }
+}
+@media (max-width: 420px) {
+  .docs-top { padding: 10px 14px; gap: 10px; }
+  .docs-top .brand small { display: none; }
+  .docs-top .brand-mark svg { width: 36px; height: 36px; }
 }

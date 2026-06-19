@@ -1,0 +1,36 @@
+/* =========================================================================
+   Nexus Memory — responsive layer · LAYOUT (structural breakpoints)
+   The page's original responsive skeleton, moved out of style.css so ALL
+   viewport-width @media live together in css/responsive/. Loaded FIRST in the
+   responsive chain (right after style.css, before base/sections/mobile-lite),
+   so the finer 768/480 refinements still win on overlap. Desktop unchanged.
+   ========================================================================= */
+
+/* ----------------------------------- grids collapse + nav → hamburger ----- */
+@media (max-width: 900px) {
+  .hero-grid, .arch-grid, .showcase-grid { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .tech-list { grid-template-columns: 1fr; }
+  .transfer { position: static; }
+
+  .nav-inner { display: flex; }
+  /* grid → flex drops .nav-cta's justify-self:end, so push it back right */
+  .nav-cta { margin-left: auto; }
+  .nav-links {
+    position: fixed; inset: 64px 12px auto 12px; flex-direction: column; align-items: flex-start; gap: 6px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: none;
+  }
+  .nav-links.open { display: flex; }
+  .nav-links a { padding: 8px 6px; width: 100%; }
+  .nav-toggle { display: inline-grid; place-items: center; width: 40px; height: 38px; margin-left: auto; border: 1px solid var(--line-2); background: var(--surface-2); border-radius: 10px; cursor: pointer; }
+  .nav-toggle span, .nav-toggle span::before, .nav-toggle span::after { content: ""; display: block; width: 18px; height: 2px; background: var(--text); transition: .2s; }
+  .nav-toggle span::before { transform: translateY(-5px); } .nav-toggle span::after { transform: translateY(3px); }
+  .nav-cta .btn:not(.icon) { display: none; }
+}
+
+/* ----------------------------------- wide figures: scroll / single col ---- */
+@media (max-width: 760px) {
+  .io-fig { overflow-x: auto; }
+  .io-fig svg { min-width: 720px; }
+  .formula-grid { grid-template-columns: 1fr; }
+}

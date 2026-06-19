@@ -6,12 +6,7 @@
    ========================================================================= */
 
 /* ------------------------------------------------------------------ nav --- */
-/* once style.css flips .nav-inner from grid to flex (≤900px) the CTA loses its
-   justify-self:end — push the CTA group (Get-started + hamburger) back to the
-   right edge across the whole hamburger range. */
-@media (max-width: 900px) {
-  .nav-cta { margin-left: auto; }
-}
+/* the grid→flex flip + .nav-cta right-align + hamburger live in layout.css */
 @media (max-width: 768px) {
   .nav-inner { padding: 12px clamp(14px, 4vw, 24px); gap: 12px; }
   .nav-links { inset: 60px 12px auto 12px; }
