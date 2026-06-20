@@ -563,6 +563,7 @@ a { color: inherit; text-decoration: none; }
 .footer-links { display: flex; gap: 22px; flex-wrap: wrap; }
 .footer-links a { color: var(--muted); font-size: 14px; }
 .footer-links a:hover { color: var(--text); }
+.footer-links a.gh-link { display: inline-flex; align-items: center; gap: 6px; }
 .footer .note { color: var(--faint); font-size: 13px; font-family: var(--mono); width: 100%; text-align: center; margin-top: 8px; }
 
 /* --------------------------------------------------------------- reveal --- */
