@@ -30,6 +30,14 @@ class NexusConfig:
     min_score: float = 0.6
     default_top_k: int = 5
 
+    # --- transparency / forget ---
+    # Relevance floor for forget(query=...): the best KNN match is only deleted
+    # when its cosine similarity (1 - distance) is >= this value. Without it
+    # forget() would delete the nearest row on a non-empty store no matter how
+    # unrelated the query is — a silent, irreversible data loss. Kept moderate so
+    # genuine paraphrases still match while clearly unrelated queries do not.
+    forget_min_similarity: float = 0.6
+
     # --- writer ---
     redundancy_threshold: float = 0.90  # cosine SIMILARITY above which a fact is a duplicate
     # When False (default), only the USER's turns become semantic facts; the

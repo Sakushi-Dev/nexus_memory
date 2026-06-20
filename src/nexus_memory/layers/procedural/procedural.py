@@ -124,9 +124,15 @@ class MockDirectiveDetector(DirectiveDetector):
     # accented characters; stops at punctuation.
     _ADDRESS = re.compile(
         r"\b(?:nenn(?:e)?\s+mich|call\s+me|address\s+me\s+as)\s+"
-        r"(?P<name>[A-Za-zÀ-ÖØ-öø-ÿ][\wÀ-ÖØ-öø-ÿ'\-]*(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][\wÀ-ÖØ-öø-ÿ'\-]*){0,2})",
+        r"(?P<name>[A-Za-zÀ-ÖØ-öø-ÿ][\wÀ-ÖØ-öø-ÿ'\-]*\.?(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][\wÀ-ÖØ-öø-ÿ'\-]*\.?){0,2})",
         re.IGNORECASE,
     )
+    # Filler/stop-words the greedy name capture may absorb; stripped before use
+    # (honorific titles like "Dr."/"Mr." stay — they are not in this set).
+    _NAME_STOPWORDS = frozenset({
+        "bitte", "mal", "doch", "einfach", "jetzt", "ab", "halt", "eben",
+        "please", "the", "just", "now", "ok", "okay", "kindly",
+    })
 
     # --- generic standing rules: always / never ---
     _ALWAYS = re.compile(r"\b(?:immer|always)\b", re.IGNORECASE)
@@ -163,7 +169,13 @@ class MockDirectiveDetector(DirectiveDetector):
         # Persona / form of address.
         m = self._ADDRESS.search(text)
         if m:
-            name = m.group("name").strip().rstrip(".,!?;:").strip()
+            raw = m.group("name").strip().rstrip(".,!?;:").strip()
+            # Drop filler/stop-words the greedy capture may have absorbed
+            # (e.g. "nenn mich bitte Sam" -> "Sam"), keeping honorific titles
+            # ("call me Dr. Sam" -> "Dr. Sam").
+            tokens = [t for t in raw.split()
+                      if t.lower().strip(".,") not in self._NAME_STOPWORDS]
+            name = " ".join(tokens).rstrip(".,!?;:").strip()
             if name:
                 _add(f"Address the user as {name}.", "persona", 7)
 

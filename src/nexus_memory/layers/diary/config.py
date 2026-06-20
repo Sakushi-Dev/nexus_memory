@@ -36,7 +36,7 @@ class DiaryConfig:
             persistent summary per fold/extension.
         inject_sessions: ``K`` — number of ADDITIONAL previous finalized session
             diaries injected into context (the current session is always
-            injected). ``0 <= K <= sessions_per_summary``.
+            injected). ``0 <= K <= 6``.
         summary_max_sentences: Upper bound (cap) of the single growing persistent
             summary, formatted into ``SUMMARY_PROMPT`` at enqueue time. Floor 2.
     """

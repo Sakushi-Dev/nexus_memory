@@ -200,6 +200,17 @@ class TransparencyInterface:
             matches = self.db.knn_search(embedding, k=1)
             if not matches:
                 return {"status": "not_found", "deleted_id": None, "query": query}
+            # Gate the destructive delete on a relevance floor: knn_search always
+            # returns a row on a non-empty store, so without this an unrelated
+            # query would silently delete a real, irreversible memory.
+            similarity = 1.0 - float(matches[0]["distance"])
+            if similarity < self.config.forget_min_similarity:
+                return {
+                    "status": "not_found",
+                    "deleted_id": None,
+                    "query": query,
+                    "best_similarity": similarity,
+                }
             fact_id = int(matches[0]["id"])
 
         deleted = self.db.delete_memory(int(fact_id))
@@ -212,6 +223,10 @@ class TransparencyInterface:
         """Re-embed ``new_content`` and overwrite the memory ``target_id``.
 
         Returns ``{"status": "not_found", ...}`` if ``target_id`` does not exist.
+
+        Note: this mutates the store, so the caller (orchestrator / the
+        ``update`` wrapper) clears the semantic read cache after this call;
+        ``TransparencyInterface`` itself holds no cache reference.
         """
         existing = self.db.get_memory(target_id)
         if existing is None:
@@ -230,6 +245,10 @@ class TransparencyInterface:
         """Manually add a high-importance fact the AI "must never forget".
 
         Returns ``{"status": "success", "id": int, "importance": float}``.
+
+        Note: this writes a new fact, so the caller (orchestrator / the ``pin``
+        wrapper) clears the semantic read cache after this call;
+        ``TransparencyInterface`` itself holds no cache reference.
         """
         embedding = self.embedder.encode(content)
         # vec0 auxiliary FLOAT column rejects a bound INTEGER, so coerce.
