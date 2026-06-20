@@ -87,6 +87,26 @@ def test_detect_name_rule_de_and_en():
     assert "Address the user as Alex." in {d["directive"] for d in en}
 
 
+def test_detect_name_strips_fillers_and_keeps_titles():
+    """PROC-01 / IO-05 regression: filler words must not be absorbed into the
+    captured name, and an honorific title with a period must be preserved."""
+    detector = MockDirectiveDetector()
+
+    def persona(text: str) -> set[str]:
+        return {
+            d["directive"]
+            for d in detector.detect(text, response="")
+            if d["category"] == "persona"
+        }
+
+    # Honorific with a period — the documented behavioral-rules example.
+    assert "Address the user as Dr. Sam." in persona("Please call me Dr. Sam, thanks")
+    # German filler "bitte" must be stripped.
+    assert persona("nenn mich bitte Sam") == {"Address the user as Sam."}
+    # Leading article + trailing filler stripped.
+    assert persona("address me as the boss please") == {"Address the user as boss."}
+
+
 def test_detect_returns_empty_when_no_rule():
     detector = MockDirectiveDetector()
     assert detector.detect("What is the capital of France?", response="Paris.") == []

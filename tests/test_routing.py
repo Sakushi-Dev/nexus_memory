@@ -77,6 +77,52 @@ def test_forget_route(nexus):
     assert isinstance(res["deleted_id"], int)
 
 
+def test_pin_and_update_routes(nexus):
+    # Seed an unrelated fact so the store is non-empty.
+    nexus.process(
+        {
+            "action": "ingest",
+            "interaction": {"query": "warm-up fact about the project", "response": "ok"},
+        }
+    )
+    nexus.wait()
+
+    # pin via process() — stores a new high-importance, pinned fact.
+    pinned = nexus.process(
+        {"action": "pin", "content": "Critical: backups run nightly at 2am.", "importance": 9.0}
+    )
+    assert pinned["status"] == "success"
+    pid = pinned["id"]
+    row = nexus.db.get_memory(pid)
+    assert row["importance"] == 9.0
+    assert row["metadata"].get("pinned") is True
+
+    # update via process() — overwrites the content and re-embeds.
+    upd = nexus.process(
+        {"action": "update", "target_id": pid, "new_content": "Critical: backups run nightly at 3am."}
+    )
+    assert upd["status"] == "success"
+    assert upd["updated_id"] == pid
+    assert nexus.db.get_memory(pid)["content"].endswith("3am.")
+
+
+def test_pin_and_update_wrappers(nexus):
+    # pin wrapper — defaults to importance 10.0.
+    pinned = nexus.pin("Remember: deploy only on green CI.")
+    assert pinned["status"] == "success"
+    pid = pinned["id"]
+    assert nexus.db.get_memory(pid)["importance"] == 10.0
+
+    # update wrapper — new content is retrievable.
+    upd = nexus.update(pid, "Remember: deploy only after a full green CI run.")
+    assert upd["status"] == "success"
+    assert "full green CI run" in nexus.db.get_memory(pid)["content"]
+
+    # update of a missing id surfaces not_found, not a raise.
+    missing = nexus.update(999999, "no such fact")
+    assert missing["status"] == "not_found"
+
+
 def test_json_string_payload_accepted(nexus):
     res = nexus.process(json.dumps({"action": "inspect", "type": "health"}))
     assert res["status"] == "success"
