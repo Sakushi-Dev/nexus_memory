@@ -59,7 +59,7 @@ The entry point for both flows is [`NexusMemory.process(payload)`](../../src/nex
 
 ## The ingest path (write)
 
-`process({"action": "ingest", "interaction": {query, response}, metadata?, priority?})` does two things: it updates **Layer I (working memory) synchronously** on the caller's thread, then dispatches the durable writes to a **background thread** and returns immediately with a `task_id`.
+`process({"action": "ingest", "interaction": {query, response}, metadata?, priority?})` does two things: it updates **Layer I (working memory) synchronously** on the caller's thread, then dispatches the durable writes to a **background thread** and returns immediately with a `task_id`. The optional `priority` (1–10) acts as an **importance floor**: every fact extracted from this interaction is stored at *at least* `priority`, never lowering a higher heuristic importance.
 
 ```python
 self.working.add_interaction(query, response)          # Layer I — sync, RAM
@@ -176,15 +176,15 @@ For the durable schema each stage writes to (the `agent_memory` vec0 table, `epi
 
 ## The assemble path (read)
 
-`process({"action": "assemble", "query", top_k=5, min_score=0.6, filters?})` builds **one** `<memory_context>` document by composing every active layer. [`ContextAssembler.assemble`](../../src/nexus_memory/core/context.py) is the coordinator; it does **not** reimplement KNN/scoring — it delegates the semantic block to [`MemoryReader`](../../src/nexus_memory/layers/semantic/reader.py) and re-nests the rendered `<fact .../>` lines verbatim.
+`process({"action": "assemble", "query", top_k=5, min_score=0.6})` builds **one** `<memory_context>` document by composing every active layer. [`ContextAssembler.assemble`](../../src/nexus_memory/core/context.py) is the coordinator; it does **not** reimplement KNN/scoring — it delegates the semantic block to [`MemoryReader`](../../src/nexus_memory/layers/semantic/reader.py) and re-nests the rendered `<fact .../>` lines verbatim.
 
 ```mermaid
 flowchart TB
-  req["assemble({query, top_k, min_score, filters})"]
+  req["assemble({query, top_k, min_score})"]
   req --> CA["ContextAssembler.assemble()"]
 
   CA --> S["1 · SEMANTIC (delegated)<br/>MemoryReader.assemble_context()"]
-  S --> Sd["cache.get()? → embed query →<br/>KNN(k=top_k×2) → 1-hop graph expand →<br/>rank(sim×imp×decay) → filter(min_score) →<br/>&lt;fact id=… /&gt; lines"]
+  S --> Sd["cache.get()? → embed query →<br/>KNN(k=top_k×2) →<br/>rank(sim×imp×decay) → filter(min_score) →<br/>&lt;fact id=… /&gt; lines"]
 
   CA --> P["2 · PROCEDURAL<br/>procedural.directives() (priority-desc, capped)"]
   CA --> R["3 · RECENT DIALOGUE<br/>episodic.recent_turns(n) — or working.recent(n)"]
@@ -198,14 +198,14 @@ flowchart TB
 ```
 
 ```
-process({"action":"assemble", "query", top_k=5, min_score=0.6, filters?})
+process({"action":"assemble", "query", top_k=5, min_score=0.6})
    │
    ▼
 ContextAssembler.assemble(request)
    │
    ├─ 1. SEMANTIC (delegated) ── MemoryReader.assemble_context()
    │        cache.get()? → embed query → KNN(k=top_k*2)
-   │        → _expand_graph() 1-hop → rank(sim×imp×decay) → filter(min_score)
+   │        → rank(sim×imp×decay) → filter(min_score)
    │        → <fact id="…" importance="…" score="…" timestamp="…">…</fact>
    │
    ├─ 2. PROCEDURAL ── procedural.directives()        (priority-desc, capped)
@@ -246,10 +246,9 @@ The result is a bounded **time-pyramid** — standing behavior, then granular fa
     <turn role="assistant" timestamp="…">…</turn>
   </recent_dialogue>
   <!-- spliced after <recent_dialogue>, only when Layer V is enabled: -->
-  <diary day="2026-06-16">…yesterday's narrative…</diary>
-  <persistent_summary>
-    <section seq="3" days="2026-06-01..2026-06-07">…this week…</section>
-  </persistent_summary>
+  <diary session="current" seq="7">…this session so far…</diary>           <!-- V: current -->
+  <diary session="sess-0006" seq="6">…the previous session…</diary>        <!-- V: prior -->
+  <persistent_summary>…the one growing cross-session summary…</persistent_summary>
 </memory_context>
 ```
 
@@ -310,13 +309,13 @@ When the [diary layer](../architecture/diary-layer.md) is enabled, the third con
 
 ```
 ingest ──▶ DiaryConsolidator ──▶ DiaryScheduler.on_interaction()
-                                       │ every N=update_every interactions / day rollover / close()
+                                       │ every N=update_every interactions / session rollover / close()
                                        ▼
                             summarization_jobs (OUTBOX)
                                        │
    host drains ── nexus.pending_summaries() ──▶ [{job_id, kind, prompt, prior_summary, input}]
    text = my_llm(job["prompt"], job["prior_summary"], job["input"])
-   nexus.submit_summary(job_id, text) ──▶ persist day → fold into section → freeze/ring
+   nexus.submit_summary(job_id, text) ──▶ persist session diary → fold sessions_per_summary into the one persistent summary
 ```
 
 This handoff is fully covered in [Architecture: Diary Layer](../architecture/diary-layer.md) and the [`examples/diary_outbox.py`](../../examples/diary_outbox.py) walkthrough.

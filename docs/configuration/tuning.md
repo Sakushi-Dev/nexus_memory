@@ -39,7 +39,6 @@ Knowing where each knob sits in the pipeline makes the trade-offs concrete. An
 embed(query)
   → SemanticCache.get()  ── hit (sim ≥ cache_threshold) ⇒ short-circuit, return cached
   → KNN over-retrieve  (k = top_k * 2)
-  → 1-hop graph expansion (memory_edges)
   → rank()  =  similarity × importance × decay   (decay uses decay_lambda)
   → filter  score ≥ min_score
   → cap to top_k
@@ -103,8 +102,6 @@ larger `decay_lambda` forgets faster. A few reference points at the default:
 
 Edge cases handled by `time_decay()`: future timestamps clamp `decay` to `1.0`;
 an unparseable timestamp is treated as "now" (no decay) with a logged warning.
-**Graph-expanded neighbors** (1-hop via `memory_edges`) carry no `distance`, so
-they get `similarity = 0` and are ranked by `importance × decay` alone.
 
 > vec0 auxiliary columns do not honor `DEFAULT`, so `timestamp` is supplied
 > explicitly on every insert. If you bypass the writer and omit it, time-decay
@@ -185,7 +182,7 @@ vector store and indirectly out of retrieval.
 [`SemanticCache`](../../src/nexus_memory/core/cache.py) is an in-RAM, thread-safe
 LRU keyed by the **query embedding**, matched by cosine similarity. On
 `assemble`, the query is embedded and looked up first; a hit short-circuits the
-entire read path (no KNN, no graph expansion, no re-ranking).
+entire read path (no KNN, no re-ranking).
 
 | Field | Default | Meaning |
 |-------|---------|---------|
@@ -251,6 +248,37 @@ Each cap is a precision-vs-completeness lever on its own section of
 
 ---
 
+## Diary (Layer V) knobs
+
+The optional [diary](../architecture/diary-layer.md) is **session-scoped** and
+fully offline: it never calls an LLM, and when `enabled=False` (the default) the
+layer is never built — no diary tables, no provider output, behavior identical to
+legacy. Its knobs live on the layer-owned [`DiaryConfig`](./diary-config.md), not
+on `NexusConfig`, and they trade off **prompt size** and **summary fidelity**
+rather than the semantic KNN/scoring path. The current session diary is **always**
+injected; the knobs below tune everything around it.
+
+| Field | Default | Effect |
+|-------|---------|--------|
+| `update_every` | `5` | Interactions between rolling session-summary jobs. Lower ⇒ the session diary tracks the conversation more tightly (more outbox jobs); raise to enqueue fewer updates. |
+| `diary_window` | `20` | Turns (1 turn = 2 rows) re-sent per rolling job. Larger ⇒ more overlap/reconciliation context per job at higher per-job cost. |
+| `max_sentences` | `50` | Upper bound of each session entry (`2-max_sentences`). Bounds how long any single `<diary>` block in the prompt can grow. |
+| `inject_sessions` | `1` | **Additional** previous finalized session diaries injected (the current one is always present). `0 ≤ inject_sessions ≤ 6`. Raise for more cross-session recall, at a larger prompt; `0` injects only the current session. |
+| `sessions_per_summary` | `6` | Finalized sessions folded into the single growing `<persistent_summary>` per fold. Lower ⇒ the summary updates after fewer sessions. |
+| `summary_max_sentences` | `300` | Cap of the single persistent summary (`2-summary_max_sentences`). Bounds the long-horizon `<persistent_summary>` block as it accumulates folds. |
+
+The main prompt-size dial here is **`inject_sessions`**: each injected previous
+session adds one `<diary>` block of up to `max_sentences` sentences, on top of the
+always-present current session and the single `<persistent_summary>`. Validation
+is enforced in `DiaryConfig.__post_init__` regardless of `enabled`:
+`update_every`, `diary_window`, `sessions_per_summary` must be `>= 1`;
+`max_sentences` and `summary_max_sentences` must be `>= 2`; `inject_sessions`
+must be in `0..6`. Diary fragments carry **no** `id="..."` attribute, so they
+never count against the `<fact id="(\d+)">` needle cap. Full field reference:
+[Diary configuration](./diary-config.md).
+
+---
+
 ## Latency benchmark (indicative)
 
 The read path is engineered to be cheap: a deterministic offline embedder plus a
@@ -276,7 +304,7 @@ print(result["latency_ms"], result["meta"]["source_count"])
 
 > **Not a CI gate.** This benchmark is informational only — absolute numbers vary
 > with hardware, store size, embedder, and `top_k`. The
-> [test suite](../../tests/) (159 tests) gates correctness, not
+> [test suite](../../tests/) (216 tests) gates correctness, not
 > latency. Swapping in a heavier embedder (e.g. `SentenceTransformerEmbedder` or
 > a network-bound `OpenAIEmbedder`) shifts the cost onto `embedder.encode()` and
 > will dominate this figure.
@@ -309,7 +337,7 @@ A pragmatic order for adjusting recall/precision/latency without thrashing:
 
 - [NexusConfig reference](./nexus-config.md) — every config field and default.
 - [Diary configuration](./diary-config.md) — Layer V (`update_every`,
-  `section_size`, `max_sections`, `inject_days`).
+  `sessions_per_summary`, `inject_sessions`, `summary_max_sentences`).
 - [Retrieval & scoring](../architecture/retrieval-and-scoring.md) — the scoring
   model and read path in full.
 - [Embedders](../usage/embedders.md) — how the embedder choice interacts with the

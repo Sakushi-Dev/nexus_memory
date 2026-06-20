@@ -92,6 +92,8 @@ assembler, and the [transparency interface](transparency.md). A per-instance
 | [`assemble`](#action-assemble) | Build a `<memory_context>` for a query | `ContextAssembler.assemble` |
 | [`ingest`](#action-ingest) | Store one user/assistant exchange (async durable write) | `MemoryWriter.ingest_async` |
 | [`forget`](#action-forget) | Delete a fact by id or best query match | `TransparencyInterface.forget` |
+| [`pin`](#action-pin) | Store a high-importance "never forget" fact | `TransparencyInterface.pin` |
+| [`update`](#action-update) | Replace a fact's content (re-embed) | `TransparencyInterface.update` |
 | [`inspect`](#action-inspect) | Health + layer contents | `TransparencyInterface.inspect` |
 | [`optimize`](#action-optimize) | `VACUUM`/compact + WAL checkpoint | `MemoryWriter.optimize` |
 | [`diary`](#action-diary) | Episodic (Layer II) day summary or transcript | `EpisodicStore.summarize_day` / `.reconstruct` |
@@ -100,7 +102,7 @@ assembler, and the [transparency interface](transparency.md). A per-instance
 | [`pending_summaries`](#action-pending_summaries-diary-only) | Drain the diary (Layer V) outbox | `DiaryLayer.route` (diary only) |
 | [`submit_summary`](#action-submit_summary-diary-only) | Apply a model-produced summary | `DiaryScheduler.submit` (diary only) |
 
-The eight core actions are validated by
+The ten core actions are validated by
 [`core/models.py`](../../src/nexus_memory/core/models.py) `parse_request`. The two
 diary-only actions are validated by the layer's **own** models in
 [`layers/diary/models.py`](../../src/nexus_memory/layers/diary/models.py),
@@ -121,7 +123,6 @@ Retrieve a unified, layer-aware `<memory_context>` for a query.
 | `query` | `str` | — | yes |
 | `top_k` | `int` | `5` | no |
 | `min_score` | `float` | `0.6` | no |
-| `filters` | `dict \| null` | `null` | no |
 
 ```python
 memory.process({
@@ -176,11 +177,17 @@ procedural (and diary) writes are dispatched on a **background thread**.
 | `metadata` | `dict \| null` | `null` | no |
 | `priority` | `int (1–10) \| null` | `null` | no |
 
+`priority`, when given, acts as an **importance floor**: every fact extracted from
+this interaction is stored with *at least* that importance (still clamped to
+`[1, 10]`). It only ever raises importance — a higher heuristic score from the
+extractor is left untouched — and `null` leaves the extractor's heuristic alone.
+
 ```python
 memory.process({
     "action": "ingest",
     "interaction": {"query": "I prefer Python.", "response": "Noted — Python."},
     "metadata": {"source": "chat"},
+    "priority": 9,   # floor: these facts land at importance >= 9
 })
 ```
 
@@ -220,14 +227,87 @@ memory.process({"action": "forget", "query": "house keys"})  # k=1 KNN → delet
 ```python
 {"status": "success", "deleted_id": 12}
 # or
-{"status": "not_found", "deleted_id": None, "fact_id": 12}     # id path, no such row
-{"status": "not_found", "deleted_id": None, "query": "..."}    # query path, no match
+{"status": "not_found", "deleted_id": None, "fact_id": 12}                          # id path, no such row
+{"status": "not_found", "deleted_id": None, "query": "...", "best_similarity": 0.3} # query below the floor
 {"status": "error", "error": "provide exactly one of fact_id or query"}
 ```
+
+> **Relevance floor (query path).** `knn_search(k=1)` always returns a row on a
+> non-empty store, so an unrelated query would otherwise delete a real, irreversible
+> memory. The query path therefore deletes only when the best match's cosine
+> similarity is **≥ [`config.forget_min_similarity`](../configuration/nexus-config.md)
+> (default `0.6`)**. Below the floor it returns `not_found` with a `best_similarity`
+> key and deletes nothing. The `fact_id` path is unaffected.
 
 > Supplying neither or both fails validation at the model level
 > (`Exactly one of 'fact_id' or 'query' must be provided.`); the
 > `provide exactly one of fact_id or query` error is the wrapper-level guard.
+
+---
+
+## Action: `pin`
+
+Store a high-importance "never forget" fact straight into semantic memory,
+bypassing extraction. Routed to
+[`TransparencyInterface.pin`](../../src/nexus_memory/core/transparency.py).
+
+**Request** (`PinRequest`):
+
+| Key | Type | Default | Required |
+|-----|------|---------|----------|
+| `action` | `"pin"` | — | yes |
+| `content` | `str` | — | yes |
+| `importance` | `float` | `10.0` | no |
+
+```python
+memory.process({"action": "pin", "content": "The user is vegetarian — never suggest meat."})
+```
+
+The fact is tagged `metadata={"pinned": True}` and defaults to the ceiling
+importance of `10.0`, so it stays at the top of
+[time-decay + importance scoring](../architecture/retrieval-and-scoring.md).
+
+**Response:**
+
+```python
+{"status": "success", "id": int, "content": str, "importance": float}
+```
+
+The convenience wrapper [`memory.pin(content, importance=10.0)`](#convenience-wrapper-methods)
+mirrors this action.
+
+---
+
+## Action: `update`
+
+Replace an existing fact's `content` and **re-embed** it, so retrieval reflects
+the corrected text. Routed to
+[`TransparencyInterface.update`](../../src/nexus_memory/core/transparency.py).
+
+**Request** (`UpdateRequest`):
+
+| Key | Type | Default | Required |
+|-----|------|---------|----------|
+| `action` | `"update"` | — | yes |
+| `target_id` | `int` | — | yes |
+| `new_content` | `str` | — | yes |
+
+```python
+memory.process({"action": "update", "target_id": 7, "new_content": "My deadline moved to next Monday."})
+```
+
+At the DB layer this is a DELETE + re-INSERT that preserves the same rowid.
+
+**Response:**
+
+```python
+{"status": "success", "updated_id": 7, "content": "new text"}
+# or
+{"status": "not_found", "updated_id": None, "target_id": 7}     # no such row
+```
+
+The convenience wrapper [`memory.update(target_id, new_content)`](#convenience-wrapper-methods)
+mirrors this action.
 
 ---
 
@@ -404,11 +484,11 @@ memory.process({"action": "pending_summaries"})
     "jobs": [
         {
             "job_id": "<uuid4>",
-            "kind": "daily" | "section",
-            "period": "2026-06-17" | None,   # job["target"] for kind="daily", else None
+            "kind": "session" | "summary",
+            "session": "<session_id>" | None,   # job["target"] for kind="session", else None
             "prompt": "<Nexus-owned prompt; forward verbatim>",
-            "prior_summary": str | None,     # rolling summary to refine
-            "input": [ {"id": int, "role": str, "content": str}, ... ],  # new items
+            "prior_summary": str | None,        # rolling summary to refine/extend
+            "input": [ {"id": int, "role": str, "content": str}, ... ],  # session: rolling overlapping window (both roles, up to diary_window turns); summary: the session entries to fold
         },
         ...
     ],
@@ -445,7 +525,7 @@ memory.process({"action": "submit_summary", "job_id": jid, "summary": "The user 
 **Response:**
 
 ```python
-{"status": "success" | "not_found" | "superseded", "applied": "daily" | "section" | None}
+{"status": "success" | "not_found" | "superseded", "applied": "session" | "summary" | None}
 ```
 
 Idempotent: resubmitting a done/superseded job is a safe no-op.
@@ -460,14 +540,17 @@ actions for direct programmatic use, plus the lifecycle helpers.
 
 | Method | Returns | Notes |
 |--------|---------|-------|
-| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"days": [...], "sections": [...]}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. |
+| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"sessions": [...], "summary": {...} | None}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. |
 | `forget(**kw)` | forget dict | Wraps `TransparencyInterface.forget` (`fact_id=` or `query=`). |
+| `pin(content, importance=10.0)` | pin dict | Wraps `TransparencyInterface.pin`. Stores a high-importance pinned fact (`metadata={"pinned": True}`). Mirrors the [`pin`](#action-pin) action. |
+| `update(target_id, new_content)` | update dict | Wraps `TransparencyInterface.update`. Replaces a fact's content and re-embeds it. Mirrors the [`update`](#action-update) action. |
 | `remember_rule(directive, category="other", priority=5, source="manual")` | rule dict | Add/reactivate a directive. Unlike `process(rule add)`, `source` is settable. |
 | `list_rules(active_only=True)` | `list[dict]` | Stored procedural rules. |
 | `diary(day=None, store=False)` | summary dict | Episodic day summary (`day=None` → latest day with turns). |
 | `working_snapshot()` | `list[dict]` | Volatile Layer I buffer `[{role, content, timestamp}, ...]` (`[]` if unwired). |
 | `reconstruct(time_range=None)` | `str` | Human-readable episodic transcript. |
 | `history(*, role=None, max_turns=None, max_tokens=None, token_counter=None, as_format="messages", template="{role}: {content}")` | `list[dict]` **or** `str` | Native LLM message history over the durable episodic layer (working buffer fallback). Three formats, two truncation modes, optional role filter. See [history()](#history--native-message-history) below. |
+| `tokens(scope="full", *, messages=None, response=None, config=None)` | `int` **or** `dict[str, int]` | Token accounting over the **actual round-trip** (`messages` array + `response`), split by section: `system` (the whole system message), `input` (user/assistant messages), `output` (the reply). `config=` picks the counter (default `len(s)//4`, or optional `tiktoken`). `int` for one scope; `{scope: int}` + `"total"` for a list. See [tokens()](#tokens--token-accounting) below. |
 | `distill()` | `{"status": "success", "promoted": [...]}` | Promote facts → rules. |
 | `pending_summaries(limit=None)` | `list[dict]` **or** error dict | Diary outbox jobs (handoff shape above). Error dict when the diary is off. |
 | `submit_summary(job_id, summary)` | `{"status", "applied"}` or error dict | Apply a model summary. Error dict when the diary is off. |
@@ -475,13 +558,15 @@ actions for direct programmatic use, plus the lifecycle helpers.
 | `wait(timeout=None)` | `None` | Block until async ingests finish. Call before `assemble`/`close` in scripts. |
 | `close()` | `None` | Flush background writers, finalize the diary (if on), close the DB. Call in `try/finally`. (`close()` waits internally, so a prior `wait()` is redundant but safe.) |
 
-> **Direct-only edits (not exposed via `process()`):**
-> `memory.transparency.update(target_id, new_content)` and
-> `memory.transparency.pin(content, importance=10.0)` on
-> [`TransparencyInterface`](../../src/nexus_memory/core/transparency.py). `update()`
-> returns `{"status": "success", "updated_id", "content"}` (or `not_found`);
-> `pin()` returns `{"status": "success", "id", "content", "importance"}` and tags
-> the row `metadata={"pinned": True}`. See [Transparency](transparency.md).
+> **Three ways to edit.** `pin` and `update` are reachable via the
+> [`pin`](#action-pin) / [`update`](#action-update) `process()` actions, via the
+> `memory.pin(...)` / `memory.update(...)` wrappers above, **and** directly on
+> [`TransparencyInterface`](../../src/nexus_memory/core/transparency.py)
+> (`memory.transparency.pin(content, importance=10.0)` /
+> `memory.transparency.update(target_id, new_content)`). `update()` returns
+> `{"status": "success", "updated_id", "content"}` (or `not_found`); `pin()`
+> returns `{"status": "success", "id", "content", "importance"}` and tags the row
+> `metadata={"pinned": True}`. See [Transparency](transparency.md).
 
 ---
 
@@ -542,6 +627,63 @@ side of the dialogue; the filter is applied before truncation.
 > fallback (episodic disabled) is in-session only. No new storage is introduced;
 > `history()` is a read-only view over what Layers II/I already own. See
 > [Memory Layers](../architecture/memory-layers.md#unified-history-over-working--episodic).
+
+---
+
+## `tokens()` — token accounting
+
+A method-only convenience accessor on
+[`NexusMemory`](../../src/nexus_memory/core/orchestrator.py) (no `process()`
+action) that counts tokens over the **actual LLM round-trip** — the request
+`messages` array plus the model's `response`, i.e. exactly what crosses the wire
+— and splits it by *section* (not storage layer). By default it uses the offline
+`len(s) // 4` heuristic; via `config=` you can switch to the optional **tiktoken**
+backend (or any custom counter) for exact counts.
+
+- **system** — the full system message(s): the host's base prompt **and**
+  everything Nexus injects into it (`directives` + `facts`). Because the recalled
+  facts/directives live inside the system message, they count here — not under
+  `input`. Nexus doesn't need to own the base prompt to count it: you hand it the
+  array you actually sent.
+- **input** — the rest of the prompt: every `user`/`assistant` message (the
+  conversation history plus the current user turn). Everything except `system`.
+- **output** — the model's `response` (the completion).
+
+```python
+messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": user_msg}]
+answer = your_llm.chat(messages)
+
+usage = memory.tokens(["system", "input", "output"], messages=messages, response=answer)
+# {"system": 52, "input": 35, "output": 8, "total": 95}  (default len//4 heuristic)
+
+exact = memory.tokens("full", messages=messages, response=answer, config="gpt-4o")
+# exact tiktoken count (requires: pip install nexus-memory[tiktoken])
+```
+
+**Parameters:**
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `scope` | `str \| list[str]` | `"full"` | What to count (below). A list yields a per-scope breakdown. Unknown scopes raise `ValueError`. |
+| `messages` | `list[dict] \| None` | `None` | The request array you send the LLM (`[{role, content}]`). Used by `system`/`input`/`full`; treated as `[]` if omitted. |
+| `response` | `str \| None` | `None` | The model's reply text (the `output`); `""` if omitted. |
+| `config` | `None \| callable \| str \| dict` | `None` | **How to count.** `None` → offline `len(s) // 4` heuristic; a `(str) -> int` callable → used as-is; `"tiktoken"` → tiktoken's `cl100k_base`; a model name (e.g. `"gpt-4o"`) → tiktoken's encoding for that model; `{"model"\|"encoding": ...}` → explicit tiktoken selection. Requesting tiktoken without it installed raises `ImportError`. |
+
+**Scopes:**
+
+| scope | counts |
+|-------|--------|
+| `system` | all `role == "system"` message content |
+| `input` | all `role in ("user", "assistant")` message content |
+| `output` | the `response` text (the model's completion) |
+| `full` | `system` + `input` + `output` (**default**) |
+
+**Return** — `int` for a single scope; for a list, a `{scope: int}` dict with an
+extra `"total"` key (the sum of the listed scopes).
+
+> **Optional tiktoken.** The default counter is offline and dependency-free. For
+> exact token counts install the extra — `pip install nexus-memory[tiktoken]` —
+> and pass `config="tiktoken"`, a model name, or `{"encoding": "cl100k_base"}`.
 
 ---
 

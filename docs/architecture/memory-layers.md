@@ -5,7 +5,8 @@ This page is a deep dive on the four core cognitive layers of Nexus Memory —
 For each it covers what the layer stores, its owning module, how it persists,
 its key classes and methods, and how the layers interact on **ingest** (write
 fan-out) and **assemble** (read composition). The optional **Diary (Layer V)**
-narrative arc gets its own page — see [The Diary Layer](diary-layer.md).
+session-wise narrative arc gets its own page — see
+[The Diary Layer](diary-layer.md).
 
 For the wider picture (the orchestrator, the full ingest/assemble dataflow, the
 extension seams) see the [Architecture Overview](overview.md). For how facts are
@@ -28,7 +29,7 @@ point; the layers are additive and the original response keys are never removed.
 | **II** | Episodic | "What happened, verbatim, and when?" | SQLite | [`episodic/episodic.py`](../../src/nexus_memory/layers/episodic/episodic.py), [`episodic/summarization.py`](../../src/nexus_memory/layers/episodic/summarization.py) |
 | **III** | Semantic | "What facts do I know?" | SQLite + vectors | [`semantic/writer.py`](../../src/nexus_memory/layers/semantic/writer.py), [`semantic/reader.py`](../../src/nexus_memory/layers/semantic/reader.py) |
 | **IV** | Procedural | "How should I behave?" | SQLite | [`procedural/procedural.py`](../../src/nexus_memory/layers/procedural/procedural.py) |
-| **V** | Diary *(optional)* | "What is the long-arc narrative?" | SQLite (only when enabled) | [`layers/diary/`](../../src/nexus_memory/layers/diary/) → [diary-layer.md](diary-layer.md) |
+| **V** | Diary *(optional)* | "What is the long-arc narrative across sessions?" | SQLite (only when enabled) | [`layers/diary/`](../../src/nexus_memory/layers/diary/) → [diary-layer.md](diary-layer.md) |
 
 All four core layers share **one SQLite connection** and a single re-entrant
 write lock (`NexusDB.lock`); Layer I is the exception — it lives only in RAM and
@@ -141,9 +142,12 @@ turn-count sentence, so the summary is **always non-empty for non-empty input**.
 An LLM-backed summarizer can be injected via `NexusMemory(summarizer=...)` for a
 fluent narrative diary.
 
-> The hierarchical, multi-day diary narrative (rolling daily → persistent
-> sections, driven by an LLM-agnostic outbox) is a **separate optional layer**
-> (Layer V). It is documented in [The Diary Layer](diary-layer.md), not here.
+> The hierarchical, cross-session diary narrative (a rolling per-session entry
+> folded into one growing persistent summary, driven by an LLM-agnostic outbox)
+> is a **separate optional layer** (Layer V). The current session's entry is
+> always injected, plus up to `inject_sessions` previous ones and the single
+> `<persistent_summary>`. It is documented in
+> [The Diary Layer](diary-layer.md), not here.
 
 ---
 
@@ -155,8 +159,7 @@ fluent narrative diary.
 
 Semantic memory is the vector store and the **only** layer that performs
 similarity search. It stores atomic, decontextualized facts as `dim`-dimensional
-vectors (default **768**) in the `agent_memory` `vec0` table, with a graph of
-relations in `memory_edges`.
+vectors (default **768**) in the `agent_memory` `vec0` table.
 
 **User-centric by default.** Only the user's turns are mined into facts; the
 assistant's prose stays in the episodic diary. Set
@@ -171,8 +174,8 @@ side and runs **asynchronously**.
 
 | Method | Purpose |
 |--------|---------|
-| `ingest_async(interaction, metadata=None)` | Spawn a daemon background thread; returns a UUID `task_id` immediately. |
-| `ingest_sync(interaction, metadata=None)` | Same pipeline inline (deterministic for tests); returns written row ids. |
+| `ingest_async(interaction, metadata=None, priority=None)` | Spawn a daemon background thread; returns a UUID `task_id` immediately. `priority` (1–10) raises each extracted fact's importance to at least that floor. |
+| `ingest_sync(interaction, metadata=None, priority=None)` | Same pipeline inline (deterministic for tests); returns written row ids. |
 | `optimize()` | `VACUUM` and report `{before_bytes, after_bytes, facts}`. |
 | `wait(timeout=None)` | Join outstanding background ingest threads. |
 
@@ -213,12 +216,9 @@ implements the read loop:
    `>= cache_threshold`, default **0.95**, short-circuits the whole path).
 2. **KNN over-retrieve** `k = max(1, top_k * 2)` candidates to give the
    re-ranker headroom.
-3. **Graph-expand** one hop from the strongest hits via `NexusDB.neighbors`;
-   pulled neighbours carry no `distance` and are scored on importance/recency
-   alone.
-4. **Re-rank** with the multi-signal scorer:
+3. **Re-rank** with the multi-signal scorer:
    `score = similarity × importance × exp(-decay_lambda · days)`.
-5. **Filter** by `min_score` (default **0.6**), cap to `top_k`, and **render**
+4. **Filter** by `min_score` (default **0.6**), cap to `top_k`, and **render**
    `<fact id=… importance=… score=… timestamp=…>` XML.
 
 It returns
@@ -391,7 +391,7 @@ read-only view over storage the two layers already own.
 
 A single ingest detects a standing request (Layer IV), logs the verbatim turns
 (Layer II), and mines a semantic fact (Layer III); a later assemble surfaces the
-directive for system-prompt injection while the diary summarizes the day.
+directive for system-prompt injection while the diary summarizes the session.
 
 ```python
 from nexus_memory import NexusMemory

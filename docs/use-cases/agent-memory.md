@@ -159,12 +159,11 @@ request is an `AssembleRequest`:
 | `query` | `str` | — | yes |
 | `top_k` | `int` | `5` | no |
 | `min_score` | `float` | `0.6` | no |
-| `filters` | `dict \| null` | `null` | no |
 
 [`ContextAssembler`](../../src/nexus_memory/core/context.py) composes every layer
 into **one** document: it delegates the semantic block to
 [`MemoryReader`](../../src/nexus_memory/layers/semantic/reader.py) (embed query →
-KNN over-retrieve `top_k*2` → 1-hop graph expansion → multi-signal re-rank →
+KNN over-retrieve `top_k*2` → multi-signal re-rank →
 filter by `min_score`), then nests the procedural directives, the recent
 dialogue, and — when enabled — the diary fragments around it.
 
@@ -306,10 +305,10 @@ the agent receives also carries:
 - **Recent dialogue** (`<recent_dialogue>`) — the last few verbatim turns
   (`episodic_recent_turns`, default `6`), from the episodic store when enabled
   or the volatile working buffer otherwise.
-- **A long-arc narrative** (the optional Layer V diary) — rolling daily
-  summaries folded into persistent sections, useful when the agent needs the
-  *story* of a relationship rather than individual facts. It plugs in without
-  the core knowing it exists. See
+- **A long-arc narrative** (the optional Layer V diary) — rolling per-session
+  summaries folded into a single growing persistent summary, useful when the
+  agent needs the *story* of a relationship rather than individual facts. It
+  plugs in without the core knowing it exists. See
   [Hierarchical Diary](hierarchical-diary.md).
 
 When you send embeddings to an external API, mask PII before it leaves the

@@ -67,6 +67,12 @@ cfg = NexusConfig(min_score=0.5, decay_lambda=0.02, default_top_k=8)
 | `min_score` | `float` | `0.6` | Retrieval score floor for `assemble`. Per-request overridable. |
 | `default_top_k` | `int` | `5` | Default number of facts retrieved per query. Per-request overridable via `top_k`. |
 
+### Transparency / forget
+
+| Field | Type | Default | Controls |
+| :-- | :-- | :-- | :-- |
+| `forget_min_similarity` | `float` | `0.6` | Relevance floor for `forget(query=...)`. The best `knn_search(k=1)` match is deleted only when its cosine similarity (`1 - distance`) is **≥** this value; below it, `forget` returns `not_found` and deletes nothing. Guards against a free-text query silently deleting an unrelated memory. The `fact_id` path bypasses it. |
+
 ### Writer (write path)
 
 | Field | Type | Default | Controls |
@@ -95,6 +101,9 @@ cfg = NexusConfig(min_score=0.5, decay_lambda=0.02, default_top_k=8)
 | `working_memory_max_turns` | `int` | `50` | Capacity of the volatile Layer I RAM ring buffer (turns). |
 | `episodic_recent_turns` | `int` | `6` | How many recent turns `assemble` injects into `<recent_dialogue>`. |
 | `episodic_enabled` | `bool` | `True` | Toggle Layer II (episodic). When off, recent dialogue falls back to working memory. |
+| `history_truncation` | `str` | `"turns"` | Default truncation mode for [`memory.history()`](api-reference.md#history--native-message-history) — `"turns"` or `"tokens"` (validated at construction). |
+| `history_max_turns` | `int` | `20` | Default turn cap when `history_truncation="turns"` and no explicit `max_turns` is passed. |
+| `history_token_budget` | `int` | `2000` | Default token budget when `history_truncation="tokens"` and no explicit `max_tokens` is passed. |
 | `procedural_max_directives` | `int` | `12` | Cap on active directives injected into context. |
 | `procedural_enabled` | `bool` | `True` | Toggle Layer IV procedural directives in context. |
 | `auto_consolidate` | `bool` | `True` | When on, `ingest` also logs episodic + runs directive detection. |
@@ -114,10 +123,11 @@ NexusMemory(diary=DiaryConfig(enabled=True, update_every=5))  # custom
 | Field | Type | Default | Symbol | Controls |
 | :-- | :-- | :-- | :-- | :-- |
 | `enabled` | `bool` | `False` | — | Master switch. When `False`, the layer is never built (no tables, no provider, no routing). |
-| `update_every` | `int` | `3` | `N` | Interactions between rolling daily-summary jobs (L1). |
-| `section_size` | `int` | `7` | `SECTION_SIZE` | Finalized daily diaries folded into one persistent section (L2). |
-| `max_sections` | `int` | `8` | `M` | Ring capacity for persistent sections; oldest overwritten (≈ `M · SECTION_SIZE` = 56 days). |
-| `inject_days` | `int` | `1` | `K` | Finalized daily diaries injected into `<memory_context>`. |
+| `update_every` | `int` | `5` | `N` | Interactions between rolling session-summary jobs (L1). |
+| `diary_window` | `int` | `20` | — | Turns (×2 rows) re-sent per rolling session job — an overlapping window, both roles. |
+| `max_sentences` | `int` | `50` | — | Upper bound of the session entry's `2-N` sentence range (floor is 2). |
+| `sessions_per_summary` | `int` | `6` | — | Finalized session diaries folded into the single growing persistent summary per fold/extension (L2). |
+| `inject_sessions` | `int` | `1` | `K` | **Additional** previous finalized session diaries injected into `<memory_context>` (`0 ≤ K ≤ 6`). The current session is **always** injected, plus one growing `<persistent_summary>`. |
 
 ## Per-request overrides (not construction-time)
 
@@ -198,16 +208,19 @@ NexusMemory(config=NexusConfig(procedural_max_directives=24))
 ### Diary (Layer V)
 
 ```python
-# Defaults (N=3, SECTION_SIZE=7, M=8, K=1).
+# Defaults (N=5, diary_window=20, max_sentences=50, sessions_per_summary=6,
+# inject_sessions=1, summary_max_sentences=300).
 NexusMemory(diary=True)
 
-# Custom cadence + a longer retention ring; inject the last 2 finalized days.
+# Custom cadence; fold every 12 sessions; inject the 2 previous sessions too.
 NexusMemory(diary=DiaryConfig(
     enabled=True,
-    update_every=5,     # summarize every 5 interactions
-    section_size=14,    # 14 days per persistent section
-    max_sections=12,    # ring of 12 sections (~168 days)
-    inject_days=2,
+    update_every=3,           # summarize every 3 interactions
+    diary_window=40,          # re-send up to 40 turns of overlap per rolling job
+    max_sentences=80,         # allow a longer session entry
+    sessions_per_summary=12,  # fold 12 finalized sessions into the persistent summary
+    inject_sessions=2,        # current + 2 previous sessions (0 ≤ K ≤ 6)
+    summary_max_sentences=500,  # raise the persistent-summary cap
 ))
 ```
 

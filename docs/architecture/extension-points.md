@@ -85,7 +85,8 @@ self.consolidators = [
     ProceduralConsolidator(self.procedural),
 ]
 if diary is not None and diary.enabled:
-    diary_layer = DiaryLayer(self.db, self.episodic, diary)
+    diary_layer = DiaryLayer(self.db, self.episodic, diary,
+                             session=lambda: self.session_id)
     self.consolidators.append(diary_layer.consolidator)  # runs AFTER episodic
 ```
 
@@ -155,12 +156,14 @@ The diary (Layer V) is the reference implementation of a self-contained layer th
 
 ```python
 class DiaryLayer:
-    def __init__(self, db, episodic, diary_config):
+    def __init__(self, db, episodic, diary_config, session):
         self.store        = DiaryStore(db)
-        self.scheduler    = DiaryScheduler(self.store, db, diary_config)
+        self.scheduler    = DiaryScheduler(self.store, db, diary_config, session)
         self.consolidator = DiaryConsolidator(self.scheduler)        # -> seam 1
-        self.provider     = DiaryContextProvider(self.store, diary_config) # -> seam 2
+        self.provider     = DiaryContextProvider(self.store, diary_config, session) # -> seam 2
 ```
+
+`session` is a required zero-arg callable returning the current `session_id`; the orchestrator injects `session=lambda: self.session_id`.
 
 The orchestrator does the wiring — appending `diary_layer.consolidator` to the writer's `consolidators` and passing `[self._diary.provider]` as the assembler's `context_providers`. The diary package itself imports no core internals beyond the `Consolidator` ABC, and never imports an LLM SDK. Deleting `layers/diary/` leaves Nexus working exactly as before.
 
@@ -182,15 +185,15 @@ Because the orchestrator appends it **after** `EpisodicConsolidator`, the curren
 
 ```python
 def provide(self, request: dict) -> dict:
-    # ... read finalized days + live ring sections from the store ...
+    # ... read the current session + previous finalized sessions + the summary ...
     return {
-        "xml": diary_xml + section_xml,        # <diary day="..."> + <persistent_summary>
-        "response": {"diary": ..., "persistent_summary": [...]},
-        "meta": {"diary_chars": ..., "section_count": ...},
+        "xml": diary_xml + summary_xml,        # <diary session="..."> + <persistent_summary>
+        "response": {"diary": [...], "persistent_summary": {...} | None},
+        "meta": {"diary_chars": ..., "session_diary_count": ...},
     }
 ```
 
-The fragments are `<diary day="...">` (the previous finalized day's narrative) and `<persistent_summary>` (the live ring sections). Neither carries `id="..."`, so the needle invariant holds; both are escaped exactly like `core/context.py`. The `response` keys (`diary`, `persistent_summary`) and `meta` keys (`diary_chars`, `section_count`) then appear in the top-level `assemble` result.
+The fragments are `<diary session="..." seq="...">` (the current session's narrative — always injected — plus up to `inject_sessions` previous finalized sessions) and `<persistent_summary>` (the single growing summary). Neither carries `id="..."`, so the needle invariant holds; both are escaped exactly like `core/context.py`. The `response` keys (`diary`, a list; `persistent_summary`, a dict or `None`) and `meta` keys (`diary_chars`, `session_diary_count`) then appear in the top-level `assemble` result.
 
 For the full diary subsystem, see [Diary Layer](diary-layer.md) and [Hierarchical Diary](../use-cases/hierarchical-diary.md).
 
