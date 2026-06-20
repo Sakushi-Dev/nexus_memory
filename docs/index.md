@@ -89,6 +89,7 @@ End-to-end scenarios drawn from the layer model.
 | Page | Covers |
 |------|--------|
 | [Agent memory](use-cases/agent-memory.md) | Wiring Nexus into an LLM agent's prompt loop. |
+| [Multiple agents](use-cases/multiple-agents.md) | One database per bot for fully isolated, independent agents. |
 | [Behavioral rules](use-cases/behavioral-rules.md) | Standing directives via the procedural layer and `distill()`. |
 | [Hierarchical diary](use-cases/hierarchical-diary.md) | Driving the diary outbox with any summarization model. |
 | [Privacy & encryption](use-cases/privacy-and-encryption.md) | The opt-in PII filter and the optional SQLCipher hook. |

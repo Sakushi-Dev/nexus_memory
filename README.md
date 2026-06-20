@@ -122,7 +122,7 @@ Full documentation lives under [docs/](docs/) — start at [docs/index.md](docs/
 - **[Architecture](docs/architecture/overview.md)** — the five-layer design, retrieval & scoring, persistence, extension points.
 - **[Usage & API](docs/usage/api-reference.md)** — getting started, every action, embedders, transparency.
 - **[Configuration](docs/configuration/nexus-config.md)** — `NexusConfig`, `DiaryConfig`, tuning.
-- **[Use cases](docs/use-cases/agent-memory.md)** — agent memory, behavioral rules, the diary, privacy.
+- **[Use cases](docs/use-cases/agent-memory.md)** — agent memory, multiple isolated agents, behavioral rules, the diary, privacy.
 
 ## Run the tests
 
