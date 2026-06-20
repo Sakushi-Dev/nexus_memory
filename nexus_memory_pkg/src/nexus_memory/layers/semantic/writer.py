@@ -8,7 +8,9 @@
   the list of written row ids.
 * :meth:`_resolve_conflict` performs a vector redundancy check
   (``knn_search(k=1)``) before each write; a similarity at or above
-  ``config.redundancy_threshold`` marks the fact as redundant (skipped).
+  ``config.redundancy_threshold`` marks the fact as redundant (skipped) — but
+  only when the nearest neighbour shares the candidate's logical scope
+  (namespace/tenant/source metadata), so cross-namespace writes are kept.
 * :meth:`optimize` vacuums the database and reports size/fact stats.
 * :meth:`wait` joins outstanding background threads for deterministic tests.
 
@@ -36,6 +38,13 @@ from ...core.embeddings import Embedder
 from .extraction import FactExtractor
 
 logger = logging.getLogger(__name__)
+
+# Metadata keys that delimit a logical scope (namespace) for dedup. Two facts
+# that are textually near-identical are only collapsed when they live in the
+# *same* scope; a near-duplicate carrying different scope values (a different
+# user / tenant / source) is kept. When the incoming fact carries none of these
+# keys the scope is empty and dedup behaves exactly as before.
+_SCOPE_KEYS = ("namespace", "tenant", "user", "user_id", "source")
 
 
 class MemoryWriter:
@@ -96,17 +105,25 @@ class MemoryWriter:
     # public ingest API
     # ------------------------------------------------------------------ #
     def ingest_async(
-        self, interaction: dict, metadata: dict | None = None
+        self,
+        interaction: dict,
+        metadata: dict | None = None,
+        priority: int | None = None,
     ) -> str:
         """Spawn a background thread to ingest ``interaction``.
 
         Returns a UUID ``task_id`` immediately; the actual write happens off the
         calling thread. Use :meth:`wait` to block until completion (tests).
+
+        ``priority`` (1..10), when given, acts as an importance floor: every
+        fact extracted from this interaction is stored with at least that
+        importance (still clamped to ``[1, 10]``). ``None`` leaves the
+        extractor's heuristic importance untouched.
         """
         task_id = str(uuid.uuid4())
         thread = threading.Thread(
             target=self._run_writer_pipeline,
-            args=(task_id, interaction, metadata),
+            args=(task_id, interaction, metadata, priority),
             name=f"nexus-writer-{task_id[:8]}",
             daemon=True,
         )
@@ -117,25 +134,33 @@ class MemoryWriter:
         return task_id
 
     def ingest_sync(
-        self, interaction: dict, metadata: dict | None = None
+        self,
+        interaction: dict,
+        metadata: dict | None = None,
+        priority: int | None = None,
     ) -> list[int]:
         """Ingest ``interaction`` inline and return the written row ids.
 
         Runs the identical pipeline as :meth:`ingest_async` but on the caller's
-        thread, which makes it deterministic for tests.
+        thread, which makes it deterministic for tests. See :meth:`ingest_async`
+        for ``priority`` semantics.
         """
-        return self._ingest(interaction, metadata)
+        return self._ingest(interaction, metadata, priority)
 
     # ------------------------------------------------------------------ #
     # background plumbing
     # ------------------------------------------------------------------ #
     def _run_writer_pipeline(
-        self, task_id: str, interaction: dict, metadata: dict | None
+        self,
+        task_id: str,
+        interaction: dict,
+        metadata: dict | None,
+        priority: int | None = None,
     ) -> None:
         """Background thread target: run the pipeline and fire the callback."""
         written: list[int] | None = None
         try:
-            written = self._ingest(interaction, metadata)
+            written = self._ingest(interaction, metadata, priority)
         except Exception:  # noqa: BLE001 - never let a worker thread die silently
             logger.exception("Writer pipeline failed for task %s", task_id)
             written = None
@@ -147,11 +172,23 @@ class MemoryWriter:
                     logger.exception("on_complete callback raised for %s", task_id)
 
     def _ingest(
-        self, interaction: dict, metadata: dict | None
+        self,
+        interaction: dict,
+        metadata: dict | None,
+        priority: int | None = None,
     ) -> list[int]:
-        """Core pipeline: extract -> (filter) -> dedup -> write. Returns ids."""
+        """Core pipeline: extract -> (filter) -> dedup -> write. Returns ids.
+
+        When ``priority`` is given it is clamped to ``[1, 10]`` and used as an
+        importance floor: each fact's heuristic importance is raised to at least
+        ``priority``. ``None`` keeps the extractor's importance unchanged.
+        """
         query = str(interaction.get("query", ""))
         response = str(interaction.get("response", ""))
+
+        priority_floor = (
+            max(1.0, min(10.0, float(priority))) if priority is not None else None
+        )
 
         facts = self._extractor.extract(query, response)
         written_ids: list[int] = []
@@ -161,6 +198,8 @@ class MemoryWriter:
             if not content:
                 continue
             importance = float(fact.get("importance", 1))
+            if priority_floor is not None:
+                importance = max(importance, priority_floor)
 
             # Apply PII masking before embedding so the stored vector and text
             # both reflect the redacted content.
@@ -212,7 +251,7 @@ class MemoryWriter:
         """
         embedding = self._embedder.encode(content)
         with self._write_lock:
-            decision = self._resolve_conflict(content, embedding)
+            decision = self._resolve_conflict(content, embedding, metadata)
             if decision == "redundant":
                 logger.debug("Skipping redundant fact: %r", content)
                 return None
@@ -227,14 +266,23 @@ class MemoryWriter:
     # ------------------------------------------------------------------ #
     # conflict resolution
     # ------------------------------------------------------------------ #
-    def _resolve_conflict(self, content: str, embedding: list[float]) -> str:
+    def _resolve_conflict(
+        self, content: str, embedding: list[float], metadata: dict | None = None
+    ) -> str:
         """Decide how to handle a candidate fact: ``insert`` or ``redundant``.
 
         Performs a ``knn_search(k=1)`` and, if the nearest neighbour's cosine
         similarity is at or above ``config.redundancy_threshold``, returns
-        ``'redundant'``. A fuller SLM-driven ``update``/``contradiction`` check
-        is out of scope here, so we never return ``'update'``
-        (the value is reserved for future use).
+        ``'redundant'`` — **but only when the neighbour shares the candidate's
+        logical scope** (see :data:`_SCOPE_KEYS`). A near-duplicate carrying a
+        different namespace/tenant/source is treated as a distinct fact and
+        inserted, so cross-namespace writes are never silently dropped. When the
+        candidate carries no scope metadata the scope is empty and the check
+        reduces to the original similarity-only behaviour.
+
+        A fuller SLM-driven ``update``/``contradiction`` check is out of scope
+        here, so we never return ``'update'`` (the value is reserved for future
+        use).
         """
         if self._db.count() == 0:
             return "insert"
@@ -246,9 +294,20 @@ class MemoryWriter:
         # similarity = 1 - cosine_distance (vectors are L2-normalized).
         distance = float(neighbours[0].get("distance", 1.0))
         similarity = 1.0 - distance
-        if similarity >= self._config.redundancy_threshold:
-            return "redundant"
-        return "insert"
+        if similarity < self._config.redundancy_threshold:
+            return "insert"
+
+        # Near-duplicate by text — only redundant if it lives in the same scope.
+        if self._scope_of(metadata) != self._scope_of(neighbours[0].get("metadata")):
+            return "insert"
+        return "redundant"
+
+    @staticmethod
+    def _scope_of(metadata: dict | None) -> dict:
+        """Project ``metadata`` onto the namespace keys (empty when absent)."""
+        if not metadata:
+            return {}
+        return {k: metadata[k] for k in _SCOPE_KEYS if k in metadata}
 
     # ------------------------------------------------------------------ #
     # maintenance

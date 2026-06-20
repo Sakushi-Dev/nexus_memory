@@ -25,7 +25,6 @@ class AssembleRequest(BaseModel):
     query: str
     top_k: int = 5
     min_score: float = 0.6
-    filters: dict | None = None
 
 
 class Interaction(BaseModel):
@@ -63,6 +62,34 @@ class ForgetRequest(BaseModel):
         if sum(provided) != 1:
             raise ValueError("Exactly one of 'fact_id' or 'query' must be provided.")
         return self
+
+
+class PinRequest(BaseModel):
+    """Request to pin a high-importance fact the AI "must never forget".
+
+    Mirrors :meth:`TransparencyInterface.pin`: ``content`` is stored as a new,
+    pinned memory at the given ``importance`` (default ``10.0``, the ceiling).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["pin"]
+    content: str
+    importance: float = 10.0
+
+
+class UpdateRequest(BaseModel):
+    """Request to overwrite an existing fact's content (and re-embed it).
+
+    Mirrors :meth:`TransparencyInterface.update`: ``target_id`` selects the
+    memory to correct, ``new_content`` replaces its text.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["update"]
+    target_id: int
+    new_content: str
 
 
 class InspectRequest(BaseModel):
@@ -190,6 +217,8 @@ _ACTION_MODELS: dict[str, type[BaseModel]] = {
     "assemble": AssembleRequest,
     "ingest": IngestRequest,
     "forget": ForgetRequest,
+    "pin": PinRequest,
+    "update": UpdateRequest,
     "inspect": InspectRequest,
     "optimize": OptimizeRequest,
     "diary": DiaryRequest,

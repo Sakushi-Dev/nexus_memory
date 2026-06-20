@@ -182,6 +182,7 @@ class NexusMemory:
             self.extractor,
             config,
             consolidators=self.consolidators,
+            on_complete=self._on_ingest_complete,
         )
         # The writer resolves its PII filter lazily; hand it our shared instance
         # so masking honours config.pii_filter_enabled and we avoid a second
@@ -232,6 +233,25 @@ class NexusMemory:
             return DiaryConfig(enabled=True)
         return diary
 
+    def _on_ingest_complete(
+        self, task_id: str, written_ids: list[int] | None
+    ) -> None:
+        """Invalidate the read cache when a background ingest commits.
+
+        The semantic cache keys fully-assembled retrieval results by query
+        embedding, so any committed write can make a cached read stale. The
+        async ingest path is the default, so we clear here (in the writer's
+        completion callback) to guarantee a subsequent ``assemble`` sees the
+        new fact. ``written_ids is None`` means the write failed; we still
+        clear defensively rather than risk serving stale reads.
+        """
+        self.cache.clear()
+        logger.debug(
+            "cache cleared after ingest task %s (wrote %s)",
+            task_id,
+            "none" if written_ids is None else len(written_ids),
+        )
+
     # ------------------------------------------------------------------ #
     # public API
     # ------------------------------------------------------------------ #
@@ -248,6 +268,8 @@ class NexusMemory:
         ``assemble``  :meth:`MemoryReader.assemble_context`
         ``ingest``    :meth:`MemoryWriter.ingest_async` (returns a task id)
         ``forget``    :meth:`TransparencyInterface.forget`
+        ``pin``       :meth:`TransparencyInterface.pin`
+        ``update``    :meth:`TransparencyInterface.update`
         ``inspect``   :meth:`TransparencyInterface.inspect`
         ``optimize``  :meth:`MemoryWriter.optimize`
         ============  =====================================================
@@ -312,7 +334,6 @@ class NexusMemory:
                     "query": request.query,
                     "top_k": request.top_k,
                     "min_score": request.min_score,
-                    "filters": request.filters,
                 }
             )
 
@@ -327,7 +348,9 @@ class NexusMemory:
             self.working.add_interaction(
                 interaction["query"], interaction["response"]
             )
-            task_id = self.writer.ingest_async(interaction, request.metadata)
+            task_id = self.writer.ingest_async(
+                interaction, request.metadata, request.priority
+            )
             return {
                 "status": "processing",
                 "task_id": task_id,
@@ -335,9 +358,23 @@ class NexusMemory:
             }
 
         if action == "forget":
-            return self.transparency.forget(
+            result = self.transparency.forget(
                 fact_id=request.fact_id, query=request.query
             )
+            self.cache.clear()  # a delete can make a cached read stale
+            return result
+
+        if action == "pin":
+            result = self.transparency.pin(
+                request.content, importance=request.importance
+            )
+            self.cache.clear()  # a new pinned fact can make a cached read stale
+            return result
+
+        if action == "update":
+            result = self.transparency.update(request.target_id, request.new_content)
+            self.cache.clear()  # an edit can make a cached read stale
+            return result
 
         if action == "inspect":
             return self.transparency.inspect(
@@ -345,7 +382,9 @@ class NexusMemory:
             )
 
         if action == "optimize":
-            return self.writer.optimize()
+            result = self.writer.optimize()
+            self.cache.clear()  # vacuum/maintenance can shift retrieval results
+            return result
 
         if action == "diary":
             return self._route_diary(request)
@@ -384,12 +423,14 @@ class NexusMemory:
                 priority=request.priority,
                 source="manual",
             )
+            self.cache.clear()  # directives feed assembled context
             return {"status": "success", "rule": rule}
         if request.op == "list":
             rules = self.procedural.list_rules(active_only=request.active_only)
             return {"status": "success", "rules": rules}
         if request.op == "deactivate":
             changed = self.procedural.deactivate(request.rule_id)
+            self.cache.clear()  # directives feed assembled context
             return {
                 "status": "success" if changed else "not_found",
                 "rule_id": request.rule_id,
@@ -467,7 +508,21 @@ class NexusMemory:
 
     def forget(self, **kw: Any) -> dict:
         """Convenience wrapper around :meth:`TransparencyInterface.forget`."""
-        return self.transparency.forget(**kw)
+        result = self.transparency.forget(**kw)
+        self.cache.clear()  # a delete can make a cached read stale
+        return result
+
+    def pin(self, content: str, importance: float = 10.0) -> dict:
+        """Convenience wrapper around :meth:`TransparencyInterface.pin`."""
+        result = self.transparency.pin(content, importance=importance)
+        self.cache.clear()  # a new pinned fact can make a cached read stale
+        return result
+
+    def update(self, target_id: int, new_content: str) -> dict:
+        """Convenience wrapper around :meth:`TransparencyInterface.update`."""
+        result = self.transparency.update(target_id, new_content)
+        self.cache.clear()  # an edit can make a cached read stale
+        return result
 
     def remember_rule(
         self,
@@ -477,12 +532,14 @@ class NexusMemory:
         source: str = "manual",
     ) -> dict:
         """Add (or reactivate) a standing procedural directive. Returns the rule."""
-        return self.procedural.add_rule(
+        rule = self.procedural.add_rule(
             directive=directive,
             category=category,
             priority=priority,
             source=source,
         )
+        self.cache.clear()  # directives feed assembled context
+        return rule
 
     def list_rules(self, active_only: bool = True) -> list[dict]:
         """Return the stored procedural rules (active only by default)."""
@@ -732,6 +789,7 @@ class NexusMemory:
         Returns ``{"status": "success", "promoted": [rule, ...]}``.
         """
         promoted = _distill(self.db, self.procedural, detector=self.detector)
+        self.cache.clear()  # promoted rules feed assembled context
         return {"status": "success", "promoted": promoted}
 
     def wait(self, timeout: float | None = None) -> None:

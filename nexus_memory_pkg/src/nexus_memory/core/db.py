@@ -55,9 +55,13 @@ class NexusDB:
     def __init__(self, config: NexusConfig) -> None:
         self.config = config
         self._conn: sqlite3.Connection | None = None
-        # Shared write lock for all layer stores (semantic + episodic +
-        # procedural). Re-entrant so a method holding it may call another that
-        # also acquires it. Used by the layer stores via ``with db.lock:``.
+        # Shared access lock for the single SQLite connection. Guards both the
+        # writes from the layer stores (semantic + episodic + procedural) and
+        # the reads below, so a foreground reader never interleaves a cursor
+        # with the writer thread's commit on the same connection. Re-entrant so
+        # a method holding it may call another that also acquires it (e.g.
+        # update_memory -> get_memory). Used by the layer stores via
+        # ``with db.lock:``.
         self.lock: threading.RLock = threading.RLock()
         self.initialize()
 
@@ -183,30 +187,36 @@ class NexusDB:
         distance(float)}``. ``id`` is the row's ``rowid``.
         """
         blob = sqlite_vec.serialize_float32(embedding)
-        rows = self.conn.execute(
-            "SELECT rowid AS id, content, importance, timestamp, metadata, distance "
-            "FROM agent_memory "
-            "WHERE embedding MATCH ? AND k = ? "
-            "ORDER BY distance",
-            (blob, k),
-        ).fetchall()
+        # Reads share the single connection with the writer thread; serialize
+        # them under the same (re-entrant) lock as writes so a reader cursor is
+        # never interleaved with a writer commit on the same connection.
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT rowid AS id, content, importance, timestamp, metadata, distance "
+                "FROM agent_memory "
+                "WHERE embedding MATCH ? AND k = ? "
+                "ORDER BY distance",
+                (blob, k),
+            ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def get_memory(self, memory_id: int) -> dict | None:
         """Fetch a single memory by id, or ``None`` if it does not exist."""
-        row = self.conn.execute(
-            "SELECT rowid AS id, content, importance, timestamp, metadata "
-            "FROM agent_memory WHERE rowid = ?",
-            (memory_id,),
-        ).fetchone()
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT rowid AS id, content, importance, timestamp, metadata "
+                "FROM agent_memory WHERE rowid = ?",
+                (memory_id,),
+            ).fetchone()
         return self._row_to_dict(row) if row is not None else None
 
     def neighbors(self, memory_id: int) -> list[int]:
         """Return 1-hop target ids reachable from ``memory_id`` via edges."""
-        rows = self.conn.execute(
-            "SELECT target_id FROM memory_edges WHERE source_id = ?",
-            (memory_id,),
-        ).fetchall()
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT target_id FROM memory_edges WHERE source_id = ?",
+                (memory_id,),
+            ).fetchall()
         return [int(r["target_id"]) for r in rows]
 
     def all_memories(
@@ -215,25 +225,27 @@ class NexusDB:
         time_range: tuple[str, str] | None = None,
     ) -> list[dict]:
         """Return memories ordered by newest first, optionally time-filtered."""
-        if time_range is not None:
-            start, end = time_range
-            rows = self.conn.execute(
-                "SELECT rowid AS id, content, importance, timestamp, metadata "
-                "FROM agent_memory WHERE timestamp >= ? AND timestamp <= ? "
-                "ORDER BY timestamp DESC LIMIT ?",
-                (start, end, limit),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT rowid AS id, content, importance, timestamp, metadata "
-                "FROM agent_memory ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        with self.lock:
+            if time_range is not None:
+                start, end = time_range
+                rows = self.conn.execute(
+                    "SELECT rowid AS id, content, importance, timestamp, metadata "
+                    "FROM agent_memory WHERE timestamp >= ? AND timestamp <= ? "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (start, end, limit),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT rowid AS id, content, importance, timestamp, metadata "
+                    "FROM agent_memory ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def count(self) -> int:
         """Return the total number of stored memories."""
-        row = self.conn.execute("SELECT COUNT(*) AS n FROM agent_memory").fetchone()
+        with self.lock:
+            row = self.conn.execute("SELECT COUNT(*) AS n FROM agent_memory").fetchone()
         return int(row["n"])
 
     # ------------------------------------------------------------------ #

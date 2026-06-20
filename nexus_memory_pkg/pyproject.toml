@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexus-memory"
-version = "0.1.0"
-description = "Nexus Memory Module — a local-first, SQLite-vec backed agent memory library."
+version = "0.4.0"
+description = "Nexus Memory Module — a local-first, SQLite-vec backed cognitive memory library for LLM agents (working / episodic / semantic / procedural + optional diary)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Nexus Memory" }]
+authors = [{ name = "Sakushi-Dev", email = "chris_reiss@outlook.de" }]
 dependencies = [
     "sqlite-vec>=0.1.9",
     "pydantic>=2.12",
@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 sentence-transformers = ["sentence-transformers>=2.2"]
 openai = ["openai>=1.0"]
+tiktoken = ["tiktoken>=0.7"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
