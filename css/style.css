@@ -432,7 +432,7 @@ a { color: inherit; text-decoration: none; }
    Fixed height so switching Code/Output (or the demo tab, or running the demo)
    never changes the window size — the hero keeps a stable height and the
    sections below it never shift. The active pane fills the frame and scrolls. */
-.demo-block .code { min-width: 0; height: 440px; display: flex; flex-direction: column; }
+.demo-block .code { min-width: 0; height: 600px; display: flex; flex-direction: column; }
 .demo-block .code-bar { flex: none; }
 .demo-block .code-pane { flex: 1 1 auto; min-height: 0; }
 .demo-block .code-pane > pre { height: 100%; max-height: none; margin: 0; overflow: auto; box-sizing: border-box; }
