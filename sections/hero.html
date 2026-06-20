@@ -45,51 +45,33 @@
             </div>
 
             <div class="code-pane" data-pane="code">
-              <pre><code><span class="tok-c"># Basic end-to-end usage — fully offline, no model download.</span>
+              <pre><code><span class="tok-c"># Persistent memory in ~10 lines — offline, no model download.</span>
 <span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
 
-memory = <span class="tok-f">NexusMemory</span>()                <span class="tok-c"># db_path → "nexus_memory.db"</span>
-<span class="tok-k">try</span>:
-    <span class="tok-c"># 1. Ingest an interaction (async; wait() for determinism).</span>
-    memory.<span class="tok-f">process</span>({
-        <span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>,
-        <span class="tok-s">"interaction"</span>: {
-            <span class="tok-s">"query"</span>:    <span class="tok-s">"where do I keep my keys?"</span>,
-            <span class="tok-s">"response"</span>: <span class="tok-s">"You always keep your house keys in the blue ceramic bowl."</span>,
-        },
-    })
-    memory.<span class="tok-f">wait</span>()
+memory = <span class="tok-f">NexusMemory</span>()                       <span class="tok-c"># one local .db file</span>
+memory.<span class="tok-f">process</span>({
+    <span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>,
+    <span class="tok-s">"interaction"</span>: {
+        <span class="tok-s">"query"</span>:    <span class="tok-s">"where do I keep my keys?"</span>,
+        <span class="tok-s">"response"</span>: <span class="tok-s">"In the blue ceramic bowl."</span>,
+    },
+})
+memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># ingest is async</span>
 
-    <span class="tok-c"># 2. Assemble a prompt-ready memory context for a related query.</span>
-    result = memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"where are my house keys?"</span>})
-    <span class="tok-f">print</span>(result[<span class="tok-s">"context_xml"</span>])
-
-    <span class="tok-c"># 3. Inspect store health.</span>
-    <span class="tok-f">print</span>(<span class="tok-s">"health:"</span>, memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"health"</span>)[<span class="tok-s">"data"</span>][<span class="tok-n">0</span>])
-
-    <span class="tok-c"># 4. Forget by free-text query.</span>
-    <span class="tok-f">print</span>(<span class="tok-s">"forgot:"</span>, memory.<span class="tok-f">forget</span>(query=<span class="tok-s">"house keys"</span>))
-<span class="tok-k">finally</span>:
-    memory.<span class="tok-f">close</span>()</code></pre>
+<span class="tok-c"># Recall later — by meaning, not keywords.</span>
+hits = memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"where are my house keys?"</span>})
+<span class="tok-k">for</span> fact <span class="tok-k">in</span> hits[<span class="tok-s">"raw_facts"</span>]:
+    <span class="tok-f">print</span>(<span class="tok-s">f"· {fact['content']}  (importance {fact['importance']})"</span>)
+memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
             <div class="code-pane" data-pane="output" hidden>
               <pre class="term-out" data-term-out aria-live="polite"></pre>
             </div>
 
-            <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python examples/basic_usage.py</span>
-&lt;memory_context&gt;
-  &lt;semantic&gt;
-    &lt;fact id="1" importance="6" score="0.82" timestamp="2026-06-18 01:24:11"&gt;User: keeps house keys in the blue ceramic bowl&lt;/fact&gt;
-  &lt;/semantic&gt;
-  &lt;recent_dialogue&gt;
-    &lt;turn role="user" timestamp="2026-06-18 01:24:11"&gt;where do I keep my keys?&lt;/turn&gt;
-    &lt;turn role="assistant" timestamp="2026-06-18 01:24:11"&gt;You always keep your house keys in the blue ceramic bowl.&lt;/turn&gt;
-  &lt;/recent_dialogue&gt;
-&lt;/memory_context&gt;
-health: {'count': 1, 'db_path': 'nexus_memory.db', 'db_size_bytes': 36864, 'dim': 768}
-forgot: {'status': 'success', 'deleted_id': 1}
-<span class="term-done">✓ process exited 0</span></pre>
+            <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python basic_usage.py</span>
+<span style="color:var(--l3)">·</span> <span class="tok-s">User keeps house keys in the blue ceramic bowl</span>  <span class="tok-c">(importance </span><span class="tok-n">6</span><span class="tok-c">)</span>
+<span class="term-done">✓ recalled by meaning in 3 ms</span></pre>
           </div>
         </div>
 
@@ -108,49 +90,38 @@ forgot: {'status': 'success', 'deleted_id': 1}
             </div>
 
             <div class="code-pane" data-pane="code">
-              <pre><code><span class="tok-c"># Layer V — drain the diary outbox on YOUR (secondary) model. Offline demo.</span>
+              <pre><code><span class="tok-c"># Layer V — a long-arc diary YOUR model writes. Offline demo.</span>
 <span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> DiaryConfig, NexusMemory
 
-<span class="tok-k">def</span> <span class="tok-f">secondary_model</span>(job: dict) -&gt; str:
-    <span class="tok-c"># A stand-in summarizer (offline, deterministic). A real host forwards</span>
-    <span class="tok-c"># job["prompt"] + job["prior_summary"] + job["input"] to its model of choice.</span>
-    said = <span class="tok-s">"; "</span>.<span class="tok-f">join</span>(t[<span class="tok-s">"content"</span>] <span class="tok-k">for</span> t <span class="tok-k">in</span> job[<span class="tok-s">"input"</span>] <span class="tok-k">if</span> t.<span class="tok-f">get</span>(<span class="tok-s">"role"</span>) == <span class="tok-s">"user"</span>)
-    <span class="tok-k">return</span> <span class="tok-s">f"This session the user told me: {said}"</span> <span class="tok-k">if</span> said <span class="tok-k">else</span> <span class="tok-s">"Nothing notable."</span>
+<span class="tok-k">def</span> <span class="tok-f">summarize</span>(job):                          <span class="tok-c"># your secondary model goes here</span>
+    said = <span class="tok-s">"; "</span>.<span class="tok-f">join</span>(t[<span class="tok-s">"content"</span>] <span class="tok-k">for</span> t <span class="tok-k">in</span> job[<span class="tok-s">"input"</span>] <span class="tok-k">if</span> t[<span class="tok-s">"role"</span>] == <span class="tok-s">"user"</span>)
+    <span class="tok-k">return</span> <span class="tok-s">f"This session the user told me: {said}"</span>
 
-<span class="tok-c"># Opt in to Layer V (off by default). update_every=5 → one session job per 5 ingests.</span>
-memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-f">DiaryConfig</span>(enabled=<span class="tok-k">True</span>))
-<span class="tok-k">try</span>:
-    <span class="tok-c"># The conversation only INGESTS — fast, non-blocking. No summarizer runs yet.</span>
-    interactions = [
-        (<span class="tok-s">"My name is Chris and I'm building a memory library."</span>, <span class="tok-s">"Nice to meet you, Chris."</span>),
-        (<span class="tok-s">"I prefer Python and my deadline is next Friday."</span>,     <span class="tok-s">"Noted — Python, Friday."</span>),
-        (<span class="tok-s">"My favorite color is purple."</span>,                        <span class="tok-s">"Purple it is."</span>),
-        (<span class="tok-s">"I'm using SQLite for storage."</span>,                       <span class="tok-s">"SQLite is a solid choice."</span>),
-        (<span class="tok-s">"The library has five memory layers."</span>,                 <span class="tok-s">"Five layers — ambitious."</span>),
-    ]
-    <span class="tok-k">for</span> query, response <span class="tok-k">in</span> interactions:
-        memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: query, <span class="tok-s">"response"</span>: response}})
-    memory.<span class="tok-f">wait</span>()                                  <span class="tok-c"># the session summary job is now in the outbox</span>
+<span class="tok-c"># Opt in to Layer V (off by default). One session summary every 3 ingests.</span>
+memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-f">DiaryConfig</span>(enabled=<span class="tok-k">True</span>, update_every=<span class="tok-n">3</span>))
+<span class="tok-k">for</span> query, response <span class="tok-k">in</span> [
+    (<span class="tok-s">"My name is Chris, I build memory systems."</span>, <span class="tok-s">"Hi Chris!"</span>),
+    (<span class="tok-s">"I prefer Python; my deadline is Friday."</span>,   <span class="tok-s">"Noted."</span>),
+    (<span class="tok-s">"My favorite color is purple."</span>,              <span class="tok-s">"Purple it is."</span>),
+]:
+    memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: query, <span class="tok-s">"response"</span>: response}})
+memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># the session summary job is now queued</span>
 
-    <span class="tok-c"># Drain the outbox out-of-band on the secondary model — one call.</span>
-    applied = memory.<span class="tok-f">drain_diary</span>(secondary_model)
-    <span class="tok-f">print</span>(<span class="tok-s">f"drained {applied} summary job(s)"</span>)
-
-    <span class="tok-c"># Layer V is session-wise: read the current session's rolling entry.</span>
-    session = memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"diary"</span>)[<span class="tok-s">"data"</span>][<span class="tok-s">"sessions"</span>][<span class="tok-n">-1</span>]
-    <span class="tok-f">print</span>(<span class="tok-s">f"diary [session {session['session_id']}, seq {session['seq']}]: {session['summary']}"</span>)
-<span class="tok-k">finally</span>:
-    memory.<span class="tok-f">close</span>()</code></pre>
+applied = memory.<span class="tok-f">drain_diary</span>(summarize)      <span class="tok-c"># drain the outbox on your model</span>
+<span class="tok-f">print</span>(<span class="tok-s">f"drained {applied} session summary"</span>)
+entry = memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"diary"</span>)[<span class="tok-s">"data"</span>][<span class="tok-s">"sessions"</span>][<span class="tok-n">-1</span>]
+<span class="tok-f">print</span>(<span class="tok-s">f"diary · {entry['summary']}"</span>)
+memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
             <div class="code-pane" data-pane="output" hidden>
               <pre class="term-out" data-term-out aria-live="polite"></pre>
             </div>
 
-            <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python examples/diary_outbox.py</span>
-drained 1 summary job(s)
-diary [session 8f3a1c2e, seq 1]: This session the user told me: My name is Chris and I'm building a memory library.; I prefer Python and my deadline is next Friday.; My favorite color is purple.; I'm using SQLite for storage.; The library has five memory layers.
-<span class="term-done">✓ process exited 0</span></pre>
+            <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python diary_outbox.py</span>
+<span class="tok-c">drained </span><span class="tok-n">1</span><span class="tok-c"> session summary</span>
+<span style="color:var(--l5)">diary ·</span> <span class="tok-s">This session the user told me: My name is Chris, I build memory systems.; I prefer Python; my deadline is Friday.; My favorite color is purple.</span>
+<span class="term-done">✓ done</span></pre>
           </div>
         </div>
       </div>

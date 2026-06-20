@@ -33,7 +33,8 @@
   .code-bar .copy { font-size: 11px; padding: 4px 9px; }
   .code pre { padding: 14px 13px 16px; }
   .code code { font-size: 12px; line-height: 1.6; }
-  .term-out { padding: 14px 13px 16px; font-size: 11.5px; max-height: 320px; }
+  .term-out { padding: 14px 13px 16px; font-size: 11.5px; }
+  .demo-block .code { height: 400px; }   /* fixed window — bar may wrap to 2 rows */
 
   /* shared buttons: comfortable tap height, slightly tighter row */
   .btns { gap: 10px; }
@@ -53,7 +54,8 @@
   /* squeeze a little more horizontal room out of the code window */
   .code pre { padding: 12px 11px 14px; }
   .code code { font-size: 11.5px; }
-  .term-out { padding: 12px 11px 14px; max-height: 260px; }
+  .term-out { padding: 12px 11px 14px; }
+  .demo-block .code { height: 340px; }
 
   /* modal hugs the viewport edges on tiny screens */
   .modal-backdrop { padding: 12px; }

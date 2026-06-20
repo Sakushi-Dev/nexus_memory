@@ -428,8 +428,14 @@ a { color: inherit; text-decoration: none; }
 .demo-tab:hover { color: var(--text); border-color: var(--line-2); }
 .demo-tab.is-active { color: var(--text); border-color: var(--accent); background: rgba(124,92,255,.12); }
 
-/* one window per script; the code and the simulated output are two views inside it */
-.demo-block .code { min-width: 0; }
+/* one window per script; the code and the simulated output are two views inside it.
+   Fixed height so switching Code/Output (or the demo tab, or running the demo)
+   never changes the window size — the hero keeps a stable height and the
+   sections below it never shift. The active pane fills the frame and scrolls. */
+.demo-block .code { min-width: 0; height: 440px; display: flex; flex-direction: column; }
+.demo-block .code-bar { flex: none; }
+.demo-block .code-pane { flex: 1 1 auto; min-height: 0; }
+.demo-block .code-pane > pre { height: 100%; max-height: none; margin: 0; overflow: auto; box-sizing: border-box; }
 /* display:flex would otherwise override the [hidden] attr — keep hidden hidden */
 .demo-block[hidden] { display: none; }
 .code-pane[hidden], .view-tab[hidden] { display: none; }
