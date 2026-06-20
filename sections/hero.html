@@ -96,27 +96,27 @@ memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
             <div class="code-pane" data-pane="code">
-              <pre><code><span class="tok-c"># Layer V — a long-arc diary YOUR model writes. Offline demo.</span>
+              <pre><code><span class="tok-c"># Layer V — a first-person diary YOUR model keeps. Offline demo.</span>
 <span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> DiaryConfig, NexusMemory
 
-<span class="tok-k">def</span> <span class="tok-f">summarize</span>(job):                          <span class="tok-c"># your secondary model goes here</span>
-    said = <span class="tok-s">"; "</span>.<span class="tok-f">join</span>(t[<span class="tok-s">"content"</span>] <span class="tok-k">for</span> t <span class="tok-k">in</span> job[<span class="tok-s">"input"</span>] <span class="tok-k">if</span> t[<span class="tok-s">"role"</span>] == <span class="tok-s">"user"</span>)
-    <span class="tok-k">return</span> <span class="tok-s">f"This session the user told me: {said}"</span>
+<span class="tok-k">def</span> <span class="tok-f">write_entry</span>(job):                       <span class="tok-c"># your model writes Nexus's prompt</span>
+    <span class="tok-c"># SESSION_PROMPT tells the model: keep a first-person diary, as prose.</span>
+    <span class="tok-k">return</span> (<span class="tok-s">"This session I met Chris, building a memory library in Python; "</span>
+            <span class="tok-s">"his deadline is Friday and he favours purple. A friendly start."</span>)
 
-<span class="tok-c"># Opt in to Layer V (off by default). One session summary every 3 ingests.</span>
+<span class="tok-c"># Opt in to Layer V (off by default). One session entry every 3 ingests.</span>
 memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-f">DiaryConfig</span>(enabled=<span class="tok-k">True</span>, update_every=<span class="tok-n">3</span>))
-<span class="tok-k">for</span> query, response <span class="tok-k">in</span> [
-    (<span class="tok-s">"My name is Chris, I build memory systems."</span>, <span class="tok-s">"Hi Chris!"</span>),
-    (<span class="tok-s">"I prefer Python; my deadline is Friday."</span>,   <span class="tok-s">"Noted."</span>),
-    (<span class="tok-s">"My favorite color is purple."</span>,              <span class="tok-s">"Purple it is."</span>),
+<span class="tok-k">for</span> user, reply <span class="tok-k">in</span> [
+    (<span class="tok-s">"Hi, I'm Chris — I build memory systems in Python."</span>, <span class="tok-s">"Nice to meet you!"</span>),
+    (<span class="tok-s">"My deadline is Friday and I favour purple."</span>,       <span class="tok-s">"Noted — Friday, purple."</span>),
+    (<span class="tok-s">"Wrapping up for today, thanks."</span>,                   <span class="tok-s">"Rest well, Chris."</span>),
 ]:
-    memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: query, <span class="tok-s">"response"</span>: response}})
-memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># the session summary job is now queued</span>
+    memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: user, <span class="tok-s">"response"</span>: reply}})
+memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># the session entry job is now queued</span>
 
-applied = memory.<span class="tok-f">drain_diary</span>(summarize)      <span class="tok-c"># drain the outbox on your model</span>
-<span class="tok-f">print</span>(<span class="tok-s">f"drained {applied} session summary"</span>)
+memory.<span class="tok-f">drain_diary</span>(write_entry)               <span class="tok-c"># Nexus owns the prompt; your model writes</span>
 entry = memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"diary"</span>)[<span class="tok-s">"data"</span>][<span class="tok-s">"sessions"</span>][<span class="tok-n">-1</span>]
-<span class="tok-f">print</span>(<span class="tok-s">f"diary · {entry['summary']}"</span>)
+<span class="tok-f">print</span>(entry[<span class="tok-s">"summary"</span>])                       <span class="tok-c"># the assistant's first-person prose</span>
 memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
@@ -125,9 +125,8 @@ memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
             <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python diary_outbox.py</span>
-<span class="tok-c">drained </span><span class="tok-n">1</span><span class="tok-c"> session summary</span>
-<span style="color:var(--l5)">diary ·</span> <span class="tok-s">This session the user told me: My name is Chris, I build memory systems.; I prefer Python; my deadline is Friday.; My favorite color is purple.</span>
-<span class="term-done">✓ done</span></pre>
+<span style="color:var(--l5)">diary ·</span> <span style="color:var(--accent-ink)">This session I met Chris, building a memory library in Python; his deadline is Friday and he favours purple. A friendly start.</span>
+<span class="term-done">✓ session entry written by your model</span></pre>
           </div>
         </div>
       </div>
