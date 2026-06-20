@@ -156,7 +156,7 @@ async function render({ id, anchor }) {
 
   if (renderedId !== doc.id) {
     try {
-      const res = await fetch('docs/' + doc.file);
+      const res = await fetch('docs/' + doc.file, { cache: 'no-cache' });
       if (!res.ok) throw new Error(res.status);
       content.innerHTML = window.mdToHtml(await res.text());
       rewriteLinks(content, doc);
@@ -233,7 +233,7 @@ async function buildIndex() {
   indexState = 'building';
   const parts = await Promise.all(DOCS.map(async (d) => {
     try {
-      const res = await fetch('docs/' + d.file);
+      const res = await fetch('docs/' + d.file, { cache: 'no-cache' });
       if (!res.ok) return [];
       return sectionsOf(d, await res.text());
     } catch (_) { return []; }
