@@ -28,6 +28,7 @@ const DOCS = [
   { id: 'usage/transparency',               title: 'Transparency',        file: 'usage/transparency.md' },
 
   { id: 'use-cases/agent-memory',           title: 'Agent memory',        file: 'use-cases/agent-memory.md' },
+  { id: 'use-cases/multiple-agents',        title: 'Multiple agents',     file: 'use-cases/multiple-agents.md' },
   { id: 'use-cases/behavioral-rules',       title: 'Behavioral rules',    file: 'use-cases/behavioral-rules.md' },
   { id: 'use-cases/hierarchical-diary',     title: 'Hierarchical diary',  file: 'use-cases/hierarchical-diary.md' },
   { id: 'use-cases/privacy-and-encryption', title: 'Privacy & encryption', file: 'use-cases/privacy-and-encryption.md' },
@@ -52,7 +53,7 @@ const GROUPS = [
   { label: 'Architecture',  ids: ['architecture/overview', 'architecture/memory-layers', 'architecture/diary-layer', 'architecture/retrieval-and-scoring', 'architecture/persistence', 'architecture/extension-points'] },
   { label: 'I / O',         ids: ['io/request-response', 'io/data-flow'] },
   { label: 'Usage',         ids: ['usage/getting-started', 'usage/api-reference', 'usage/configuration', 'usage/embedders', 'usage/transparency'] },
-  { label: 'Use cases',     ids: ['use-cases/agent-memory', 'use-cases/behavioral-rules', 'use-cases/hierarchical-diary', 'use-cases/privacy-and-encryption'] },
+  { label: 'Use cases',     ids: ['use-cases/agent-memory', 'use-cases/multiple-agents', 'use-cases/behavioral-rules', 'use-cases/hierarchical-diary', 'use-cases/privacy-and-encryption'] },
   { label: 'Configuration', ids: ['configuration/nexus-config', 'configuration/diary-config', 'configuration/tuning'] },
   { label: 'Changelog',     ids: ['changelog/index', 'changelog/0.4.1', 'changelog/0.4.0', 'changelog/0.3.5', 'changelog/0.3.4', 'changelog/0.3.3', 'changelog/0.3.2', 'changelog/0.3.1'] },
 ];
