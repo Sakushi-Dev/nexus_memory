@@ -89,7 +89,7 @@ A single `ingest` consolidates across layers, and `assemble` returns one unified
 - **I. Working** ([`working.py`](src/nexus_memory/layers/working/working.py)) — a volatile RAM ring buffer of the last *N* turns for fast recency context.
 - **II. Episodic** ([`episodic/`](src/nexus_memory/layers/episodic/episodic.py)) — persistent raw dialogue plus deterministic narrative day-summaries.
 - **III. Semantic** ([`semantic/`](src/nexus_memory/layers/semantic/reader.py), [`core/db.py`](src/nexus_memory/core/db.py)) — decontextualized fact vectors retrieved by cosine KNN, then re-ranked by `similarity × importance × exp(-λ · days)`.
-- **IV. Procedural** ([`procedural.py`](src/nexus_memory/layers/procedural/procedural.py)) — standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context.
+- **IV. Procedural** ([`procedural.py`](src/nexus_memory/layers/procedural/procedural.py)) — standing behavioral directives (e.g. "Keep answers concise.") detected automatically and injected into the assembled context.
 - **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded session-pyramid of model-written summaries (one rolling summary per session, folded into a single growing persistent summary) that carries the conversation across session boundaries; enable with `NexusMemory(diary=True)`, then drain `pending_summaries()` and return text via `submit_summary()`.
 
 ## Actions

@@ -19,8 +19,8 @@ Separately, :func:`distill` performs lightweight *distillation*: it scans
 high-importance semantic facts for standing-preference patterns (reusing a
 :class:`~nexus_memory.procedural.DirectiveDetector` on the fact content) and
 promotes any matches into procedural rules (``source="auto"``). This lets a
-preference that was only ever stored as a fact ("the user wants answers in
-German") graduate into an actionable behavioral directive.
+preference that was only ever stored as a fact ("the user wants concise
+answers") graduate into an actionable behavioral directive.
 """
 
 from __future__ import annotations

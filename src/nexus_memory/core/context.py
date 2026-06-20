@@ -9,7 +9,7 @@ three layer sections inside a single ``<memory_context>`` document::
 
     <memory_context>
       <procedural>
-        <directive priority="9">Respond in German.</directive>
+        <directive priority="9">Keep answers concise.</directive>
       </procedural>
       <semantic>
         <fact id="12" importance="7" score="0.83" timestamp="...">User: ...</fact>

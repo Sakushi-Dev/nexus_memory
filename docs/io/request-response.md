@@ -81,7 +81,7 @@ the [diary layer](../architecture/diary-layer.md) and
 {"action": "forget",   "fact_id": 12}
 {"action": "pin",      "content": "User's name is Ada.", "importance": 10.0}
 {"action": "update",   "target_id": 12, "new_content": "User now lives in Munich."}
-{"action": "rule",     "op": "add", "directive": "Respond in German.", "priority": 9}
+{"action": "rule",     "op": "add", "directive": "Keep answers concise.", "category": "tone", "priority": 9}
 ```
 
 A handful of fields are constrained at the schema level — e.g. `IngestRequest.priority`
@@ -142,8 +142,8 @@ semantic block to
 ```xml
 <memory_context>
   <procedural>
-    <directive priority="2">Respond in German.</directive>
-    <directive priority="1">Be concise.</directive>
+    <directive priority="2">Keep answers concise.</directive>
+    <directive priority="1">Address the user as Sam.</directive>
   </procedural>
   <semantic>
     <fact id="12" importance="7" score="0.83" timestamp="2026-06-16 09:14:02">User: ...</fact>
@@ -202,7 +202,7 @@ providers:
     "status": "success",
     "context_xml": "<memory_context>...</memory_context>",
     "raw_facts": [{"id": int, "content": str, "score": float, "timestamp": str}, ...],
-    "directives": ["Respond in German.", "Be concise."],        # Layer IV, priority desc
+    "directives": ["Keep answers concise.", "Address the user as Sam."],   # Layer IV, priority desc
     "recent_dialogue": [{"role": str, "content": str, "timestamp": str}, ...],
     "meta": {
         "tokens_estimated": int,

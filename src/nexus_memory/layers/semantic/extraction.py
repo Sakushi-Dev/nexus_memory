@@ -219,8 +219,12 @@ _HIGH_VALUE_BILINGUAL = _HIGH_VALUE_TOKENS | frozenset(
         "heiße", "heißt", "wohne", "wohnt", "lebe", "lebt", "mag", "magst",
         "bevorzuge", "arbeite", "arbeitet", "baue", "baut", "brauche", "braucht",
         "muss", "immer", "nie", "lieblings", "nummer", "zahl", "merken", "merk",
-        "erinnern", "telefon", "adresse", "geboren", "deutsch", "englisch",
-        "sprich", "sprechen", "sprichst",
+        "erinnern", "telefon", "adresse", "geboren",
+        # NOTE: reply-language words (deutsch/englisch/sprich/...) are deliberately
+        # NOT boosted — reply language is the host's concern, never a durable
+        # preference, so a language instruction must not be promoted to a
+        # high-importance fact (which would also feed it into distillation).
+        # "immer"/"nie" stay: they signal any standing preference, not just language.
     }
 )
 

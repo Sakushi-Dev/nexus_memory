@@ -1,12 +1,13 @@
-"""End-to-end multi-layer integration (the German scenario).
+"""End-to-end multi-layer integration (the standing-directive scenario).
 
-Reproduces the canonical German-language scenario through the public
+Reproduces the canonical behavioral-directive scenario through the public
 :meth:`NexusMemory.process` surface only (plus the documented convenience
-wrappers):
+wrappers). Reply language is the host's concern and is never mined as a
+directive, so the standing request here is a tone rule:
 
-1. The user issues a standing behavioral request — ``"sprich ab jetzt deutsch"``.
-2. A later ``assemble`` surfaces the mined ``"Respond in German."`` directive both
-   in the ``directives`` list AND inside the rendered ``context_xml``
+1. The user issues a standing behavioral request — ``"fasse dich ab jetzt kurz"``.
+2. A later ``assemble`` surfaces the mined ``"Keep answers concise."`` directive
+   both in the ``directives`` list AND inside the rendered ``context_xml``
    (``<procedural>`` block).
 3. The volatile working buffer holds the recent turns synchronously.
 4. The episodic diary summarizes the day's turns into a non-empty narrative.
@@ -53,15 +54,15 @@ def _today() -> str:
 # --------------------------------------------------------------------------- #
 # the end-to-end scenario
 # --------------------------------------------------------------------------- #
-def test_german_scenario_end_to_end(nexus):
-    """Ingesting a German standing request makes later assembles respond in German."""
-    # --- 1. The user asks (in German) to be answered in German from now on. ---
+def test_standing_directive_scenario_end_to_end(nexus):
+    """Ingesting a standing "be concise" request makes later assembles carry it."""
+    # --- 1. The user asks (in German) to be answered concisely from now on. ---
     res_ingest = nexus.process(
         {
             "action": "ingest",
             "interaction": {
-                "query": "Sprich ab jetzt deutsch mit mir.",
-                "response": "Alles klar, ab jetzt antworte ich auf Deutsch.",
+                "query": "Bitte fasse dich ab jetzt kurz mit mir.",
+                "response": "Alles klar, ab jetzt halte ich mich kurz.",
             },
         }
     )
@@ -93,7 +94,7 @@ def test_german_scenario_end_to_end(nexus):
     nexus.wait()
 
     # ------------------------------------------------------------------ #
-    # 3. A later assemble carries the mined "Respond in German." directive.
+    # 3. A later assemble carries the mined "Keep answers concise." directive.
     # ------------------------------------------------------------------ #
     res = nexus.process(
         {
@@ -106,12 +107,12 @@ def test_german_scenario_end_to_end(nexus):
     assert res["status"] == "success"
 
     # The directive is present in the structured `directives` list ...
-    assert "Respond in German." in res["directives"], (
-        f"expected German directive in directives, got: {res['directives']}"
+    assert "Keep answers concise." in res["directives"], (
+        f"expected concise directive in directives, got: {res['directives']}"
     )
 
     # ... AND rendered inside the <procedural> section of the context XML.
-    assert "Respond in German." in res["context_xml"]
+    assert "Keep answers concise." in res["context_xml"]
     assert "<procedural>" in res["context_xml"]
     assert "<memory_context>" in res["context_xml"]
     # The directive must sit inside the <procedural> block (not, say, leaked into
@@ -120,7 +121,7 @@ def test_german_scenario_end_to_end(nexus):
         r"<procedural>(.*?)</procedural>", res["context_xml"], re.DOTALL
     )
     assert procedural_block is not None
-    assert "Respond in German." in procedural_block.group(1)
+    assert "Keep answers concise." in procedural_block.group(1)
     assert "<directive" in procedural_block.group(1)
 
     # ------------------------------------------------------------------ #
@@ -149,7 +150,7 @@ def test_working_buffer_holds_recent_turns(nexus):
         {
             "action": "ingest",
             "interaction": {
-                "query": "Sprich ab jetzt deutsch.",
+                "query": "Fasse dich ab jetzt kurz.",
                 "response": "Verstanden.",
             },
         }
@@ -171,7 +172,7 @@ def test_working_buffer_holds_recent_turns(nexus):
     roles = [t["role"] for t in snapshot]
     assert roles == ["user", "assistant", "user", "assistant"]
     contents = [t["content"] for t in snapshot]
-    assert contents[0] == "Sprich ab jetzt deutsch."
+    assert contents[0] == "Fasse dich ab jetzt kurz."
     assert contents[-1] == "Hallo Sam."
     # Every turn carries a timestamp in the shared UTC text format.
     for turn in snapshot:
@@ -226,28 +227,28 @@ def test_inspect_working_and_procedural_return_data(nexus):
         {
             "action": "ingest",
             "interaction": {
-                "query": "Sprich ab jetzt deutsch und fasse dich kurz.",
+                "query": "Fasse dich ab jetzt kurz und nenn mich Sam.",
                 "response": "Okay.",
             },
         }
     )
     nexus.wait()
 
-    # Procedural: the German + concise directives were auto-detected and stored.
+    # Procedural: the concise + persona directives were auto-detected and stored.
     proc = nexus.process({"action": "inspect", "type": "procedural"})
     assert proc["status"] == "success"
     directives = {r["directive"] for r in proc["data"]}
-    assert "Respond in German." in directives
     assert "Keep answers concise." in directives
+    assert "Address the user as Sam." in directives
     # Auto-mined rules are tagged source="auto" and active.
-    german = next(r for r in proc["data"] if r["directive"] == "Respond in German.")
-    assert german["source"] == "auto"
-    assert german["active"] == 1
-    assert german["category"] == "language"
+    concise = next(r for r in proc["data"] if r["directive"] == "Keep answers concise.")
+    assert concise["source"] == "auto"
+    assert concise["active"] == 1
+    assert concise["category"] == "tone"
 
     # Working: the interaction's turns are present in the volatile buffer.
     work = nexus.process({"action": "inspect", "type": "working"})
     assert work["status"] == "success"
     assert len(work["data"]) == 2
     assert work["data"][0]["role"] == "user"
-    assert "deutsch" in work["data"][0]["content"].lower()
+    assert "kurz" in work["data"][0]["content"].lower()

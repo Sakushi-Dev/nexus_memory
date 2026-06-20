@@ -74,7 +74,7 @@ All seven parameters and their defaults:
 | `embedder` | `None` → `HashingEmbedder(dim=config.dim)` | Any [`Embedder`](embedders.md). The default is deterministic, dependency-free, offline. |
 | `extractor` | `None` → `SpeakerAwareExtractor(include_assistant=config.semantic_include_assistant)` | Turns interactions into scored facts. Pass `MockFactExtractor()` for the naive sentence splitter. |
 | `summarizer` | `None` → `MockSummarizer()` | Episodic (Layer II) day-summary backend (offline, deterministic). |
-| `detector` | `None` → `MockDirectiveDetector()` | Mines standing behavioral rules from interactions (offline, DE + EN). |
+| `detector` | `None` → `MockDirectiveDetector()` | Mines standing behavioral rules from interactions (offline). |
 | `diary` | `None` | Optional Layer V switch. Pass `diary=True` (shorthand for `DiaryConfig(enabled=True)`) or a [`DiaryConfig`](../configuration/diary-config.md) for custom knobs; `False`/`None` leaves it off. The layer is built **only** when the resolved config is enabled — otherwise no diary tables, provider, or routing exist. |
 
 **Construction side effects.** Opens the SQLite connection (loads sqlite-vec,
@@ -140,7 +140,7 @@ memory.process({
     "status": "success",
     "context_xml": "<memory_context>...</memory_context>",
     "raw_facts": [{"id": int, "content": str, "score": float, "timestamp": str}, ...],
-    "directives": ["Respond in German.", ...],          # Layer IV, priority desc
+    "directives": ["Keep answers concise.", ...],       # Layer IV, priority desc
     "recent_dialogue": [{"role": str, "content": str, "timestamp": str}, ...],
     "meta": {
         "tokens_estimated": int,
@@ -408,13 +408,13 @@ Manage procedural (Layer IV) standing directives. Routed via
 | `action` | `"rule"` | — | |
 | `op` | `"add" \| "list" \| "deactivate"` | — | required |
 | `directive` | `str \| null` | `null` | **required when `op="add"`** |
-| `category` | `str` | `"other"` | normalized to language/tone/format/persona/other |
+| `category` | `str` | `"other"` | normalized to tone/format/persona/other |
 | `priority` | `int (1–10)` | `5` | |
 | `rule_id` | `int \| null` | `null` | **required when `op="deactivate"`** |
 | `active_only` | `bool` | `True` | used by `op="list"` |
 
 ```python
-memory.process({"action": "rule", "op": "add", "directive": "Respond in German.", "category": "language", "priority": 9})
+memory.process({"action": "rule", "op": "add", "directive": "Keep answers concise.", "category": "tone", "priority": 9})
 memory.process({"action": "rule", "op": "list", "active_only": True})
 memory.process({"action": "rule", "op": "deactivate", "rule_id": 3})
 ```

@@ -236,7 +236,7 @@ The result is a bounded **time-pyramid** — standing behavior, then granular fa
 ```xml
 <memory_context>
   <procedural>
-    <directive priority="9">Respond in German.</directive>          <!-- IV: behavior -->
+    <directive priority="9">Keep answers concise.</directive>        <!-- IV: behavior -->
   </procedural>
   <semantic>
     <fact id="12" importance="7" score="0.83" timestamp="…">User: Ich wohne in Berlin</fact>  <!-- III -->
@@ -263,7 +263,7 @@ The result is a bounded **time-pyramid** — standing behavior, then granular fa
   "status": "success",
   "context_xml": "<memory_context>…</memory_context>",
   "raw_facts": [{"id", "content", "score", "timestamp"}, …],   # introspection
-  "directives": ["Respond in German.", …],
+  "directives": ["Keep answers concise.", …],
   "recent_dialogue": [{"role", "content", "timestamp"}, …],
   "meta": {"tokens_estimated", "source_count",
            "directive_count", "recent_count", …provider meta},

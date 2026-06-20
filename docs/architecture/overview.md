@@ -14,11 +14,11 @@ from nexus_memory import NexusMemory
 nexus = NexusMemory("nexus_memory.db")
 
 nexus.process({"action": "ingest",
-               "interaction": {"query": "I prefer answers in German.",
+               "interaction": {"query": "Please keep your answers concise.",
                                "response": "Got it."}})
 nexus.wait()  # async ingest — flush before reading back
 
-result = nexus.process({"action": "assemble", "query": "What language?"})
+result = nexus.process({"action": "assemble", "query": "How should you answer?"})
 print(result["context_xml"])   # <memory_context>...</memory_context>
 nexus.close()
 ```
@@ -40,7 +40,7 @@ Nexus models memory after a coarse cognitive hierarchy. Each layer answers a dif
 - **Layer I — Working memory** is a thread-safe bounded ring buffer (`deque(maxlen=working_memory_max_turns)`, default **50**) of the most recent turns. It is updated **synchronously** on ingest and is the fallback source of recent dialogue when the episodic layer is off. Nothing here is persisted.
 - **Layer II — Episodic** persists the raw dialogue transcript (`episodic_turns`) plus optional day-summaries (`episodic_summaries`). A pluggable `Summarizer` (default `MockSummarizer`, offline) turns a day's turns into a short narrative.
 - **Layer III — Semantic** is the vector store and the only layer that does similarity search. A `FactExtractor` turns an interaction into scored atomic facts; each is embedded, deduplicated, and written to the `agent_memory` vec0 table. The read path embeds the query, over-retrieves via KNN, re-ranks, and renders `<fact .../>` XML.
-- **Layer IV — Procedural** holds *directives* — standing behavioral rules ("Respond in German.", "Be concise."). Rules are upserted (UNIQUE on `directive`), priority-ranked (1–10), and activatable.
+- **Layer IV — Procedural** holds *directives* — standing behavioral rules ("Keep answers concise.", "Be concise."). Rules are upserted (UNIQUE on `directive`), priority-ranked (1–10), and activatable.
 - **Layer V — Diary** *(off by default)* builds a hierarchical long-arc narrative: rolling per-session summaries fold into a single growing persistent summary. Crucially, it **never calls an LLM itself** — it enqueues summarization jobs into an outbox that the host drains and answers.
 
 For the full per-layer schema, methods, and defaults, see [Memory Layers](memory-layers.md); the diary has its own page at [Diary Layer](diary-layer.md).

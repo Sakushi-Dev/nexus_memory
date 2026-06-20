@@ -2,9 +2,10 @@
 
 Covers:
 
-* :class:`MockDirectiveDetector` deterministic detection of German, English,
-  concise and "address me as <name>" standing rules from the *user's* text
-  (and that it ignores the assistant ``response``).
+* :class:`MockDirectiveDetector` deterministic detection of concise and
+  "address me as <name>" standing rules from the *user's* text (and that it
+  ignores the assistant ``response``). Reply language is intentionally NOT
+  detected — the host owns that choice, so language requests yield no directive.
 * :class:`ProceduralStore.add_rule` upsert semantics: a repeated directive
   keeps exactly one row and a deactivated directive is reactivated on re-add.
 * :meth:`ProceduralStore.directives` ordering (priority desc) and the
@@ -37,23 +38,80 @@ def store(db, config):
 # --------------------------------------------------------------------------- #
 # MockDirectiveDetector — detection from user text
 # --------------------------------------------------------------------------- #
-def test_detect_german():
+def test_language_requests_are_not_detected():
+    """Reply language is the host's concern: Nexus must mine no language directive.
+
+    Both the German and the English standing-language phrasings that used to be
+    distilled into "Respond in German./English." yield nothing — including the
+    back-door cases that carry "immer"/"always"/"nie"/"never" plus a language,
+    which the old generic standing-rule catch-all captured (the live 0.4.2 demo
+    leak). That catch-all has been removed, so these can no longer leak.
+    """
     detector = MockDirectiveDetector()
-    found = detector.detect("Sprich ab jetzt bitte deutsch", response="OK")
-    directives = {d["directive"] for d in found}
-    assert "Respond in German." in directives
-    rule = next(d for d in found if d["directive"] == "Respond in German.")
-    assert rule["category"] == "language"
-    assert isinstance(rule["priority"], int) and rule["priority"] >= 1
+    for text in (
+        # Existing phrasings (must still yield nothing).
+        "Sprich ab jetzt bitte deutsch",
+        "antworte auf deutsch",
+        "Please answer in English from now on",
+        "respond in english only",
+        # Back-door leaks: always/never + a language must NOT become a rule.
+        "Bitte antworte ab jetzt immer auf Deutsch.",   # the live demo leak
+        "Antworte nie auf Englisch.",
+        "Sprich ab jetzt immer englisch",
+        "Always reply in German.",
+        "Never answer in English.",
+        # Bare preposition + language and verb + language phrasings.
+        "reply in German",
+        "answer in French",
+        "sprich englisch",
+        "auf Deutsch",
+        "in English",
+    ):
+        assert detector.detect(text, response="") == [], text
 
 
-def test_detect_english():
+def test_generic_standing_rules_are_no_longer_mined():
+    """The mock no longer has a generic always/never catch-all.
+
+    A free-form "always/never ..." sentence cannot be reliably classified as a
+    standing rule by regex (and trying leaked reply-language directives), so the
+    detector deliberately mines ONLY the specific tone/persona patterns. Generic
+    standing rules now yield nothing — a host that wants them plugs in an
+    LLM-backed detector.
+    """
     detector = MockDirectiveDetector()
-    found = detector.detect("Please answer in English from now on", response="")
-    directives = {d["directive"] for d in found}
-    assert "Respond in English." in directives
-    rule = next(d for d in found if d["directive"] == "Respond in English.")
-    assert rule["category"] == "language"
+    for text in (
+        "always cite your sources",
+        "never use emojis",
+        "Bitte immer Quellen angeben.",
+        "never answer rudely",
+        "Always answer in detail.",
+    ):
+        assert detector.detect(text, response="") == [], text
+
+
+def test_tone_and_persona_fire_regardless_of_always_never():
+    """tone/persona detection is independent of any "immer"/"always" token in the
+    same sentence (there is no generic branch left to interfere)."""
+    detector = MockDirectiveDetector()
+
+    # Tone path: "immer" present, concise detection still fires.
+    tone = detector.detect("Fasse dich ab jetzt immer kurz.", response="")
+    assert "Keep answers concise." in {d["directive"] for d in tone}
+
+    # Persona path: a name rule in a sentence that also contains "immer" still
+    # fires. The comma bounds the greedy name capture at "Sam".
+    persona = detector.detect("Nenn mich Sam, und antworte immer höflich.", response="")
+    assert "Address the user as Sam." in {d["directive"] for d in persona}
+
+
+def test_reply_language_not_stored_at_ingest_level(store):
+    """ingest-level regression: a reply-language instruction stores nothing."""
+    stored = store.detect_and_store(
+        "Bitte antworte immer auf Deutsch", response="ok"
+    )
+    assert stored == []
+    assert store.count(active_only=False) == 0
 
 
 def test_detect_concise_de_and_en():
@@ -125,9 +183,9 @@ def test_detect_ignores_assistant_response():
 # add_rule — upsert + reactivation
 # --------------------------------------------------------------------------- #
 def test_add_rule_basic(store):
-    rule = store.add_rule("Respond in German.", category="language", priority=8)
-    assert rule["directive"] == "Respond in German."
-    assert rule["category"] == "language"
+    rule = store.add_rule("Keep answers concise.", category="tone", priority=8)
+    assert rule["directive"] == "Keep answers concise."
+    assert rule["category"] == "tone"
     assert rule["priority"] == 8
     assert rule["active"] == 1
     assert rule["source"] == "manual"
@@ -136,8 +194,8 @@ def test_add_rule_basic(store):
 
 
 def test_add_rule_upsert_keeps_single_row(store):
-    first = store.add_rule("Respond in German.", category="language", priority=5)
-    second = store.add_rule("Respond in German.", category="language", priority=9, source="auto")
+    first = store.add_rule("Keep answers concise.", category="tone", priority=5)
+    second = store.add_rule("Keep answers concise.", category="tone", priority=9, source="auto")
     # Same UNIQUE(directive) -> one row, same id, refreshed fields.
     assert second["id"] == first["id"]
     assert second["priority"] == 9
@@ -163,9 +221,12 @@ def test_add_rule_clamps_priority_and_normalizes_category(store):
     high = store.add_rule("A.", priority=99)
     low = store.add_rule("B.", priority=-3)
     weird = store.add_rule("C.", category="nonsense")
+    # "language" is no longer a valid category — it normalizes to "other" too.
+    lang = store.add_rule("D.", category="language")
     assert high["priority"] == 10
     assert low["priority"] == 1
     assert weird["category"] == "other"
+    assert lang["category"] == "other"
 
 
 def test_add_rule_rejects_empty_directive(store):
@@ -174,12 +235,12 @@ def test_add_rule_rejects_empty_directive(store):
 
 
 def test_detect_and_store_persists_auto_rules(store):
-    stored = store.detect_and_store("sprich ab jetzt deutsch", response="ok")
-    assert {r["directive"] for r in stored} == {"Respond in German."}
+    stored = store.detect_and_store("bitte fasse dich ab jetzt kurz", response="ok")
+    assert {r["directive"] for r in stored} == {"Keep answers concise."}
     assert stored[0]["source"] == "auto"
     # Persisted and listed.
     assert store.count(active_only=True) == 1
-    assert store.list_rules()[0]["directive"] == "Respond in German."
+    assert store.list_rules()[0]["directive"] == "Keep answers concise."
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +280,7 @@ def test_directives_capped_at_config(db_path):
 # deactivate
 # --------------------------------------------------------------------------- #
 def test_deactivate_returns_true_then_false(store):
-    rule = store.add_rule("Respond in German.", priority=8)
+    rule = store.add_rule("Keep answers concise.", priority=8)
     assert store.deactivate(rule["id"]) is True
     # Already inactive -> no row changes.
     assert store.deactivate(rule["id"]) is False
@@ -239,9 +300,9 @@ def test_rules_persist_across_reopen(db_path):
     db1 = NexusDB(config)
     try:
         store1 = ProceduralStore(db1, config)
-        store1.add_rule("Respond in German.", category="language", priority=8)
+        store1.add_rule("Address the user as Sam.", category="persona", priority=8)
         store1.add_rule("Keep answers concise.", category="tone", priority=6)
-        dropped = store1.add_rule("Respond in English.", category="language", priority=8)
+        dropped = store1.add_rule("Use bullet points.", category="format", priority=8)
         store1.deactivate(dropped["id"])
     finally:
         db1.close()
@@ -253,6 +314,6 @@ def test_rules_persist_across_reopen(db_path):
         assert store2.count(active_only=False) == 3
         assert store2.count(active_only=True) == 2
         # Active directives survive, ordered by priority, inactive excluded.
-        assert store2.directives() == ["Respond in German.", "Keep answers concise."]
+        assert store2.directives() == ["Address the user as Sam.", "Keep answers concise."]
     finally:
         db2.close()

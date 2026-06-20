@@ -63,7 +63,7 @@ def _ingest(nexus: NexusMemory, query: str, response: str) -> None:
 def test_assemble_nests_three_layers_in_one_memory_context(nexus):
     """All three layer sections are nested inside exactly one <memory_context>."""
     # Seed a standing directive (procedural) ...
-    _ingest(nexus, "bitte sprich ab jetzt deutsch", "Alles klar, ich antworte auf Deutsch.")
+    _ingest(nexus, "bitte fasse dich ab jetzt kurz", "Alles klar, ich halte mich kurz.")
     # ... a recallable semantic fact + recent dialogue (episodic) ...
     _ingest(nexus, "where are my keys?", NEEDLE)
 
@@ -87,7 +87,7 @@ def test_assemble_nests_three_layers_in_one_memory_context(nexus):
         assert xml.index(tag) < xml.index("</memory_context>")
 
     # The procedural directive surfaced with a <directive priority=".."> element.
-    assert "Respond in German." in xml
+    assert "Keep answers concise." in xml
     assert re.search(r"<directive priority=\"\d+\">", xml)
 
 
@@ -137,7 +137,7 @@ def test_only_semantic_facts_carry_id_and_count_capped(nexus):
 # --------------------------------------------------------------------------- #
 def test_response_has_superset_keys(nexus):
     """assemble returns the full layer-aware superset of response keys."""
-    _ingest(nexus, "antworte bitte auf deutsch", "Mach ich.")
+    _ingest(nexus, "fasse dich bitte kurz", "Mach ich.")
     _ingest(nexus, "remember my favorite color", "Your favorite color is teal.")
 
     res = nexus.process(
@@ -151,7 +151,7 @@ def test_response_has_superset_keys(nexus):
     # Layer-aware superset keys.
     assert isinstance(res["directives"], list)
     assert all(isinstance(d, str) for d in res["directives"])
-    assert "Respond in German." in res["directives"]
+    assert "Keep answers concise." in res["directives"]
 
     assert isinstance(res["recent_dialogue"], list)
     for turn in res["recent_dialogue"]:
@@ -165,7 +165,7 @@ def test_response_has_superset_keys(nexus):
     assert meta["directive_count"] == len(res["directives"])
     assert meta["recent_count"] == len(res["recent_dialogue"])
     assert meta["source_count"] == len(res["raw_facts"])
-    assert meta["directive_count"] >= 1  # the German directive we seeded
+    assert meta["directive_count"] >= 1  # the "be concise" directive we seeded
 
 
 def test_recent_dialogue_reflects_episodic_turns(nexus):

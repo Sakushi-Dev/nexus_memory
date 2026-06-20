@@ -41,7 +41,7 @@ A single `ingest` consolidates across layers, and one `assemble` returns a unifi
 | **I** | Working | "What was just said?" | RAM only (ring buffer) | A bounded ring buffer of the last *N* turns (default **50**) for fast recency context, updated synchronously on ingest. |
 | **II** | Episodic | "What happened, verbatim, and when?" | SQLite | Persistent raw dialogue transcript plus deterministic narrative day-summaries. |
 | **III** | Semantic | "What facts do I know?" | SQLite + vectors | Decontextualized fact vectors retrieved by cosine KNN, then re-ranked by `similarity × importance × exp(-λ · days)`. |
-| **IV** | Procedural | "How should I behave?" | SQLite | Standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context. |
+| **IV** | Procedural | "How should I behave?" | SQLite | Standing behavioral directives (e.g. "Keep answers concise.") detected automatically and injected into the assembled context. |
 | **V** | Diary *(optional, off by default)* | "What is the long-arc narrative?" | SQLite (only when enabled) | A bounded session-pyramid of model-written summaries (one rolling summary per session, folded into a single growing persistent summary), driven through a handoff outbox — the library never calls an LLM itself. |
 
 Layers I–IV fan out from a single `ingest`; the diary (Layer V) is opt-in via `NexusMemory(diary=True)`. The deep design of each layer is covered under [Architecture](#architecture).
@@ -110,7 +110,7 @@ Release notes, newest first.
 
 | Page | Covers |
 |------|--------|
-| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.4.1](changelog/0.4.1.md). |
+| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.4.2](changelog/0.4.2.md). |
 
 ## Actions at a glance
 
