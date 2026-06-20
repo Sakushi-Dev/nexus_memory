@@ -75,10 +75,19 @@ function wireCopyButtons() {
   document.querySelectorAll('[data-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const sel = btn.getAttribute('data-copy');
-      const src = sel ? document.querySelector(sel) : btn.closest('.code')?.querySelector('code');
-      if (!src) return;
+      const codeEl = sel ? document.querySelector(sel) : btn.closest('.code')?.querySelector('code');
+      if (!codeEl) return;
+      let text;
+      if (btn.hasAttribute('data-copy-cmd')) {
+        // terminal blocks: copy only the command line(s) — drop comments + blanks
+        const clone = codeEl.cloneNode(true);
+        clone.querySelectorAll('.tok-c').forEach((c) => c.remove());
+        text = clone.textContent.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+      } else {
+        text = codeEl.innerText.trim();
+      }
       try {
-        await navigator.clipboard.writeText(src.innerText.trim());
+        await navigator.clipboard.writeText(text);
         const old = btn.textContent;
         btn.textContent = 'copied';
         btn.classList.add('done');

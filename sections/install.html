@@ -18,7 +18,7 @@
         <div class="code-bar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           <span class="file">terminal</span>
-          <button class="copy" data-copy>copy</button>
+          <button class="copy" data-copy data-copy-cmd>copy</button>
         </div>
         <pre><code><span class="tok-c"># clone + install — pip pulls the 3 deps and registers the package</span>
 git clone https://github.com/Sakushi-Dev/nexus_memory.git &amp;&amp; cd nexus_memory &amp;&amp; pip install -e .
@@ -30,7 +30,6 @@ git clone https://github.com/Sakushi-Dev/nexus_memory.git &amp;&amp; cd nexus_me
         <div class="code-bar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           <span class="file">terminal</span>
-          <button class="copy" data-copy>copy</button>
         </div>
         <pre><code><span class="tok-c"># optional: isolate Nexus + its deps in a project-local venv</span>
 python -m venv .venv &amp;&amp; source .venv/bin/activate   <span class="tok-c"># Windows: .venv\Scripts\Activate.ps1</span>
@@ -41,7 +40,6 @@ git clone https://github.com/Sakushi-Dev/nexus_memory.git &amp;&amp; cd nexus_me
         <div class="code-bar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           <span class="file">terminal</span>
-          <button class="copy" data-copy>copy</button>
         </div>
         <pre><code><span class="tok-c"># the defaults need nothing extra. opt into a richer embedder:</span>
 pip install -e <span class="tok-s">".[sentence-transformers]"</span>   <span class="tok-c"># local transformer embeddings</span>
