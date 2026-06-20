@@ -15,7 +15,7 @@
           <span class="badge"><b>Python</b> 3.11+</span>
           <span class="badge"><b>SQLite</b> + sqlite-vec</span>
           <span class="badge"><b>5</b> memory layers</span>
-          <span class="badge"><b>159</b> tests green</span>
+          <span class="badge"><b>216</b> tests green</span>
           <span class="badge"><b>License</b> MIT</span>
         </div>
         <div class="btns">
@@ -109,33 +109,36 @@ forgot: {'status': 'success', 'deleted_id': 1}
 
             <div class="code-pane" data-pane="code">
               <pre><code><span class="tok-c"># Layer V — drain the diary outbox on YOUR (secondary) model. Offline demo.</span>
-<span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
+<span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> DiaryConfig, NexusMemory
 
 <span class="tok-k">def</span> <span class="tok-f">secondary_model</span>(job: dict) -&gt; str:
-    <span class="tok-c"># A stand-in summarizer (offline, deterministic). A real host would</span>
-    <span class="tok-c"># forward job["prompt"] + job["input"] to its model of choice.</span>
+    <span class="tok-c"># A stand-in summarizer (offline, deterministic). A real host forwards</span>
+    <span class="tok-c"># job["prompt"] + job["prior_summary"] + job["input"] to its model of choice.</span>
     said = <span class="tok-s">"; "</span>.<span class="tok-f">join</span>(t[<span class="tok-s">"content"</span>] <span class="tok-k">for</span> t <span class="tok-k">in</span> job[<span class="tok-s">"input"</span>] <span class="tok-k">if</span> t.<span class="tok-f">get</span>(<span class="tok-s">"role"</span>) == <span class="tok-s">"user"</span>)
-    <span class="tok-k">return</span> <span class="tok-s">f"The user mentioned: {said}"</span> <span class="tok-k">if</span> said <span class="tok-k">else</span> <span class="tok-s">"Nothing notable."</span>
+    <span class="tok-k">return</span> <span class="tok-s">f"This session the user told me: {said}"</span> <span class="tok-k">if</span> said <span class="tok-k">else</span> <span class="tok-s">"Nothing notable."</span>
 
-<span class="tok-c"># Opt in to Layer V (off by default). N=3 → a daily job every 3 interactions.</span>
-memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-k">True</span>)
+<span class="tok-c"># Opt in to Layer V (off by default). update_every=5 → one session job per 5 ingests.</span>
+memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-f">DiaryConfig</span>(enabled=<span class="tok-k">True</span>))
 <span class="tok-k">try</span>:
     <span class="tok-c"># The conversation only INGESTS — fast, non-blocking. No summarizer runs yet.</span>
     interactions = [
         (<span class="tok-s">"My name is Chris and I'm building a memory library."</span>, <span class="tok-s">"Nice to meet you, Chris."</span>),
         (<span class="tok-s">"I prefer Python and my deadline is next Friday."</span>,     <span class="tok-s">"Noted — Python, Friday."</span>),
         (<span class="tok-s">"My favorite color is purple."</span>,                        <span class="tok-s">"Purple it is."</span>),
+        (<span class="tok-s">"I'm using SQLite for storage."</span>,                       <span class="tok-s">"SQLite is a solid choice."</span>),
+        (<span class="tok-s">"The library has five memory layers."</span>,                 <span class="tok-s">"Five layers — ambitious."</span>),
     ]
     <span class="tok-k">for</span> query, response <span class="tok-k">in</span> interactions:
         memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: query, <span class="tok-s">"response"</span>: response}})
-    memory.<span class="tok-f">wait</span>()                                  <span class="tok-c"># the daily job is now in the outbox</span>
+    memory.<span class="tok-f">wait</span>()                                  <span class="tok-c"># the session summary job is now in the outbox</span>
 
     <span class="tok-c"># Drain the outbox out-of-band on the secondary model — one call.</span>
     applied = memory.<span class="tok-f">drain_diary</span>(secondary_model)
     <span class="tok-f">print</span>(<span class="tok-s">f"drained {applied} summary job(s)"</span>)
 
-    <span class="tok-k">for</span> day <span class="tok-k">in</span> memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"diary"</span>)[<span class="tok-s">"data"</span>][<span class="tok-s">"days"</span>]:
-        <span class="tok-f">print</span>(<span class="tok-s">f"diary {day['period']}: {day['summary']}"</span>)
+    <span class="tok-c"># Layer V is session-wise: read the current session's rolling entry.</span>
+    session = memory.<span class="tok-f">inspect</span>(type=<span class="tok-s">"diary"</span>)[<span class="tok-s">"data"</span>][<span class="tok-s">"sessions"</span>][<span class="tok-n">-1</span>]
+    <span class="tok-f">print</span>(<span class="tok-s">f"diary [session {session['session_id']}, seq {session['seq']}]: {session['summary']}"</span>)
 <span class="tok-k">finally</span>:
     memory.<span class="tok-f">close</span>()</code></pre>
             </div>
@@ -146,7 +149,7 @@ memory = <span class="tok-f">NexusMemory</span>(diary=<span class="tok-k">True</
 
             <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python examples/diary_outbox.py</span>
 drained 1 summary job(s)
-diary 2026-06-18: The user mentioned: My name is Chris and I'm building a memory library.; I prefer Python and my deadline is next Friday.; My favorite color is purple.
+diary [session 8f3a1c2e, seq 1]: This session the user told me: My name is Chris and I'm building a memory library.; I prefer Python and my deadline is next Friday.; My favorite color is purple.; I'm using SQLite for storage.; The library has five memory layers.
 <span class="term-done">✓ process exited 0</span></pre>
           </div>
         </div>

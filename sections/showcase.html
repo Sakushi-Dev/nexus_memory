@@ -3,30 +3,30 @@
     <div class="section-head" data-reveal>
       <p class="eyebrow">Layer V · the diary</p>
       <h2 class="h2">A long-term narrative that stays bounded — forever.</h2>
-      <p class="lead">The diary compresses raw dialogue into a time-pyramid and keeps it bounded, <b>without the module ever calling an LLM</b>. It just enqueues jobs; your host drains them on any model.</p>
+      <p class="lead">The diary compresses raw dialogue into a bounded, session-wise narrative, <b>without the module ever calling an LLM</b>. It just enqueues jobs; your host drains them on any model.</p>
     </div>
 
     <div class="showcase-grid">
       <div class="panel" data-reveal>
-        <h3>The time-pyramid</h3>
-        <p class="sub">Fine detail near the present, coarse epochs as you go back — bounded by a ring.</p>
+        <h3>The session narrative</h3>
+        <p class="sub">A rolling per-session entry on top, folded into one growing persistent summary.</p>
         <div class="pyramid">
           <div class="tier l0">
             <div class="t-k">L0 · episodic_turns</div>
             <div class="t-name">Raw turns</div>
             <div class="t-meta">every user / assistant message</div>
           </div>
-          <div class="arrow">▼ rolling, every 3 interactions</div>
+          <div class="arrow">▼ rolling, over the session window</div>
           <div class="tier l1">
-            <div class="t-k">L1 · diary_days</div>
-            <div class="t-name">One entry per day</div>
-            <div class="t-meta">an LLM narrative, updated in place</div>
+            <div class="t-k">L1 · session entry</div>
+            <div class="t-name">One entry per session</div>
+            <div class="t-meta">an LLM narrative, rolled in place</div>
           </div>
-          <div class="arrow">▼ folded, 7 days per section</div>
+          <div class="arrow">▼ folded, every few sessions</div>
           <div class="tier l2">
-            <div class="t-k">L2 · persistent_sections</div>
-            <div class="t-name">Epoch summaries</div>
-            <div class="t-meta">ring of 8 · ≈ 56 days · oldest overwritten</div>
+            <div class="t-k">L2 · persistent_summary</div>
+            <div class="t-name">One growing summary</div>
+            <div class="t-meta">a single cross-session prose, capped &amp; bounded</div>
           </div>
         </div>
       </div>
@@ -49,7 +49,7 @@
           </div>
           <div class="flow-step">
             <div class="b">4</div>
-            <div><b>submit_summary()</b><p>Hand the text back; Nexus folds it into the pyramid. Idempotent — re-submitting is a safe no-op.</p></div>
+            <div><b>submit_summary()</b><p>Hand the text back; Nexus rolls it into the session entry. Idempotent — re-submitting is a safe no-op.</p></div>
           </div>
         </div>
       </div>

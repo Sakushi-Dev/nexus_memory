@@ -188,7 +188,7 @@ function wireCards() {
     },
     retrieval: {
       ico: '⌖', title: 'Salient retrieval', tag: 'similarity × importance × decay',
-      body: 'Retrieval embeds the query, over-retrieves via vec0 cosine KNN, expands one hop over the fact graph, then re-ranks by <code>similarity × importance × exp(-λ·days)</code> and filters by <code>min_score</code>. The result is a small, on-point context — capped at <code>top_k</code> — that mitigates the lost-in-the-middle problem instead of dumping everything into the prompt.',
+      body: 'Retrieval embeds the query, over-retrieves via vec0 cosine KNN, then re-ranks by <code>similarity × importance × exp(-λ·days)</code> and filters by <code>min_score</code>. The result is a small, on-point context — capped at <code>top_k</code> — that mitigates the lost-in-the-middle problem instead of dumping everything into the prompt.',
     },
   };
 
