@@ -45,23 +45,27 @@
             </div>
 
             <div class="code-pane" data-pane="code">
-              <pre><code><span class="tok-c"># Persistent memory in ~10 lines — offline, no model download.</span>
+              <pre><code><span class="tok-c"># Long-term memory across a conversation — offline, no model download.</span>
 <span class="tok-k">from</span> nexus_memory <span class="tok-k">import</span> NexusMemory
 
 memory = <span class="tok-f">NexusMemory</span>()                       <span class="tok-c"># one local .db file</span>
-memory.<span class="tok-f">process</span>({
-    <span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>,
-    <span class="tok-s">"interaction"</span>: {
-        <span class="tok-s">"query"</span>:    <span class="tok-s">"where do I keep my keys?"</span>,
-        <span class="tok-s">"response"</span>: <span class="tok-s">"In the blue ceramic bowl."</span>,
-    },
-})
-memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># ingest is async</span>
 
-<span class="tok-c"># Recall later — by meaning, not keywords.</span>
-hits = memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"where are my house keys?"</span>})
-<span class="tok-k">for</span> fact <span class="tok-k">in</span> hits[<span class="tok-s">"raw_facts"</span>]:
+<span class="tok-c"># Earlier turns in the chat — each one is remembered (Layers III + IV).</span>
+<span class="tok-k">for</span> user, assistant <span class="tok-k">in</span> [
+    (<span class="tok-s">"Hi! I'm Chris and I build LLM agents."</span>,       <span class="tok-s">"Nice to meet you, Chris!"</span>),
+    (<span class="tok-s">"My dog Mochi is a corgi and loves the park."</span>, <span class="tok-s">"Got it — Mochi the corgi."</span>),
+    (<span class="tok-s">"I keep my keys in the blue ceramic bowl."</span>,    <span class="tok-s">"Noted: the blue bowl."</span>),
+    (<span class="tok-s">"Always be concise."</span>,                          <span class="tok-s">"Understood."</span>),
+]:
+    memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {<span class="tok-s">"query"</span>: user, <span class="tok-s">"response"</span>: assistant}})
+memory.<span class="tok-f">wait</span>()                                <span class="tok-c"># ingests are async</span>
+
+<span class="tok-c"># ...many turns later — recall by meaning, not keywords.</span>
+recall = memory.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"what breed is my dog?"</span>})
+<span class="tok-k">for</span> fact <span class="tok-k">in</span> recall[<span class="tok-s">"raw_facts"</span>]:
     <span class="tok-f">print</span>(<span class="tok-s">f"· {fact['content']}  (importance {fact['importance']})"</span>)
+<span class="tok-k">for</span> rule <span class="tok-k">in</span> recall[<span class="tok-s">"directives"</span>]:
+    <span class="tok-f">print</span>(<span class="tok-s">f"⚑ {rule}"</span>)
 memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
@@ -70,8 +74,10 @@ memory.<span class="tok-f">close</span>()</code></pre>
             </div>
 
             <pre class="term-src" data-term-src hidden><span class="term-cmd">$ python basic_usage.py</span>
-<span style="color:var(--l3)">·</span> <span class="tok-s">User keeps house keys in the blue ceramic bowl</span>  <span class="tok-c">(importance </span><span class="tok-n">6</span><span class="tok-c">)</span>
-<span class="term-done">✓ recalled by meaning in 3 ms</span></pre>
+<span style="color:var(--l3)">·</span> <span class="tok-s">user's dog Mochi is a corgi</span>  <span class="tok-c">(importance </span><span class="tok-n">6</span><span class="tok-c">)</span>
+<span style="color:var(--l3)">·</span> <span class="tok-s">Mochi loves going to the park</span>  <span class="tok-c">(importance </span><span class="tok-n">5</span><span class="tok-c">)</span>
+<span style="color:var(--l4)">⚑</span> <span class="tok-s">Keep answers concise.</span>
+<span class="term-done">✓ recalled by meaning across 4 turns in 4 ms</span></pre>
           </div>
         </div>
 
