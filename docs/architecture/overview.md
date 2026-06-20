@@ -39,9 +39,9 @@ Nexus models memory after a coarse cognitive hierarchy. Each layer answers a dif
 
 - **Layer I — Working memory** is a thread-safe bounded ring buffer (`deque(maxlen=working_memory_max_turns)`, default **50**) of the most recent turns. It is updated **synchronously** on ingest and is the fallback source of recent dialogue when the episodic layer is off. Nothing here is persisted.
 - **Layer II — Episodic** persists the raw dialogue transcript (`episodic_turns`) plus optional day-summaries (`episodic_summaries`). A pluggable `Summarizer` (default `MockSummarizer`, offline) turns a day's turns into a short narrative.
-- **Layer III — Semantic** is the vector store and the only layer that does similarity search. A `FactExtractor` turns an interaction into scored atomic facts; each is embedded, deduplicated, and written to the `agent_memory` vec0 table. The read path embeds the query, over-retrieves via KNN, expands 1-hop over `memory_edges`, re-ranks, and renders `<fact .../>` XML.
+- **Layer III — Semantic** is the vector store and the only layer that does similarity search. A `FactExtractor` turns an interaction into scored atomic facts; each is embedded, deduplicated, and written to the `agent_memory` vec0 table. The read path embeds the query, over-retrieves via KNN, re-ranks, and renders `<fact .../>` XML.
 - **Layer IV — Procedural** holds *directives* — standing behavioral rules ("Respond in German.", "Be concise."). Rules are upserted (UNIQUE on `directive`), priority-ranked (1–10), and activatable.
-- **Layer V — Diary** *(off by default)* builds a hierarchical long-arc narrative: rolling daily summaries fold into multi-day persistent sections. Crucially, it **never calls an LLM itself** — it enqueues summarization jobs into an outbox that the host drains and answers.
+- **Layer V — Diary** *(off by default)* builds a hierarchical long-arc narrative: rolling per-session summaries fold into a single growing persistent summary. Crucially, it **never calls an LLM itself** — it enqueues summarization jobs into an outbox that the host drains and answers.
 
 For the full per-layer schema, methods, and defaults, see [Memory Layers](memory-layers.md); the diary has its own page at [Diary Layer](diary-layer.md).
 
@@ -123,7 +123,7 @@ Heavier or networked embedders are **optional extras**, lazily imported so they 
 
 - [Memory Layers](memory-layers.md) — per-layer schema, methods, and persistence detail.
 - [Diary Layer](diary-layer.md) — the optional Layer V and its outbox state machine.
-- [Retrieval & Scoring](retrieval-and-scoring.md) — `score = similarity × importance × decay`, graph expansion, and the semantic cache.
+- [Retrieval & Scoring](retrieval-and-scoring.md) — `score = similarity × importance × decay`, KNN over-retrieval, re-ranking, and the semantic cache.
 - [Persistence](persistence.md) — the single-file schema, the write lock, and vec0 gotchas.
 - [Extension Points](extension-points.md) — the consolidator and context-provider seams.
 - [Getting Started](../usage/getting-started.md) and the [API Reference](../usage/api-reference.md) — the practical integration path.

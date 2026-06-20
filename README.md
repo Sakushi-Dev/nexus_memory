@@ -88,9 +88,9 @@ A single `ingest` consolidates across layers, and `assemble` returns one unified
 
 - **I. Working** ([`working.py`](src/nexus_memory/layers/working/working.py)) — a volatile RAM ring buffer of the last *N* turns for fast recency context.
 - **II. Episodic** ([`episodic/`](src/nexus_memory/layers/episodic/episodic.py)) — persistent raw dialogue plus deterministic narrative day-summaries.
-- **III. Semantic** ([`semantic/`](src/nexus_memory/layers/semantic/reader.py), [`core/db.py`](src/nexus_memory/core/db.py)) — decontextualized fact vectors retrieved by cosine KNN, graph-expanded, then re-ranked by `similarity × importance × exp(-λ · days)`.
+- **III. Semantic** ([`semantic/`](src/nexus_memory/layers/semantic/reader.py), [`core/db.py`](src/nexus_memory/core/db.py)) — decontextualized fact vectors retrieved by cosine KNN, then re-ranked by `similarity × importance × exp(-λ · days)`.
 - **IV. Procedural** ([`procedural.py`](src/nexus_memory/layers/procedural/procedural.py)) — standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context.
-- **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded time-pyramid of model-written summaries; enable with `NexusMemory(diary=True)`, then drain `pending_summaries()` and return text via `submit_summary()`.
+- **V. Diary (optional, off by default)** ([`diary/`](src/nexus_memory/layers/diary/layer.py)) — a bounded session-pyramid of model-written summaries (one rolling summary per session, folded into a single growing persistent summary) that carries the conversation across session boundaries; enable with `NexusMemory(diary=True)`, then drain `pending_summaries()` and return text via `submit_summary()`.
 
 ## Actions
 
@@ -98,18 +98,20 @@ Every payload carries an `action`, passed to `memory.process(...)`:
 
 | action | key fields | returns |
 |---|---|---|
-| `assemble` | `query`, `top_k=5`, `min_score=0.6`, `filters?` | `{status, context_xml, raw_facts, directives, recent_dialogue, meta, latency_ms}` |
-| `ingest` | `interaction:{query, response}`, `metadata?`, `priority?` | `{status:"processing", task_id, estimated_completion_ms}` |
-| `forget` | exactly one of `fact_id` / `query` | `{status, deleted_id}` |
+| `assemble` | `query`, `top_k=5`, `min_score=0.6` | `{status, context_xml, raw_facts, directives, recent_dialogue, meta, latency_ms}` |
+| `ingest` | `interaction:{query, response}`, `metadata?`, `priority?` *(1-10 importance floor)* | `{status:"processing", task_id, estimated_completion_ms}` |
+| `forget` | exactly one of `fact_id` / `query` *(a `query` below `forget_min_similarity` returns `not_found`)* | `{status, deleted_id}` |
+| `pin` | `content`, `importance=10.0` | `{status, id, content, importance}` |
+| `update` | `target_id`, `new_content` | `{status, updated_id, content}` |
 | `inspect` | `type:"health"\|"episodic"\|"semantic"\|"working"\|"procedural"`, `filter?` | `{status, data}` |
 | `optimize` | — | `{before_bytes, after_bytes, facts}` |
 | `diary` | `day?`, `time_range?`, `store?` | `{status, period, summary, turn_count}` |
 | `rule` | `op:"add"\|"list"\|"deactivate"`, `directive?`, `priority?`, `rule_id?` | add: `{status, rule}` · list: `{status, rules}` · deactivate: `{status, rule_id, deactivated}` |
 | `distill` | — | `{status, promoted:[rule,...]}` |
-| `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[{job_id, kind, period, prompt, prior_summary, input}, ...]}` |
-| `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
+| `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[{job_id, kind, session, prompt, prior_summary, input}, ...]}` |
+| `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"session"\|"summary"}` |
 
-Convenience wrappers: `inspect(...)`, `forget(...)`, `wait(...)`, `close()`, `remember_rule(...)`, `list_rules()`, `diary(...)`, `working_snapshot()`, `reconstruct(...)`, `history(...)`, `distill()`, plus `pending_summaries(...)` / `submit_summary(...)` when the diary is enabled.
+Convenience wrappers: `inspect(...)`, `forget(...)`, `pin(...)`, `update(...)`, `wait(...)`, `close()`, `remember_rule(...)`, `list_rules()`, `diary(...)`, `working_snapshot()`, `reconstruct(...)`, `history(...)`, `distill()`, plus `pending_summaries(...)` / `submit_summary(...)` when the diary is enabled.
 
 Tune everything (scoring, dedup threshold, cache, privacy, per-layer settings) via [`NexusConfig`](src/nexus_memory/core/config.py).
 

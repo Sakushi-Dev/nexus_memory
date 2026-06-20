@@ -67,6 +67,12 @@ cfg = NexusConfig(min_score=0.5, decay_lambda=0.02, default_top_k=8)
 | `min_score` | `float` | `0.6` | Retrieval score floor for `assemble`. Per-request overridable. |
 | `default_top_k` | `int` | `5` | Default number of facts retrieved per query. Per-request overridable via `top_k`. |
 
+### Transparency / forget
+
+| Field | Type | Default | Controls |
+| :-- | :-- | :-- | :-- |
+| `forget_min_similarity` | `float` | `0.6` | Relevance floor for `forget(query=...)`. The best `knn_search(k=1)` match is deleted only when its cosine similarity (`1 - distance`) is **≥** this value; below it, `forget` returns `not_found` and deletes nothing. Guards against a free-text query silently deleting an unrelated memory. The `fact_id` path bypasses it. |
+
 ### Writer (write path)
 
 | Field | Type | Default | Controls |
@@ -95,6 +101,9 @@ cfg = NexusConfig(min_score=0.5, decay_lambda=0.02, default_top_k=8)
 | `working_memory_max_turns` | `int` | `50` | Capacity of the volatile Layer I RAM ring buffer (turns). |
 | `episodic_recent_turns` | `int` | `6` | How many recent turns `assemble` injects into `<recent_dialogue>`. |
 | `episodic_enabled` | `bool` | `True` | Toggle Layer II (episodic). When off, recent dialogue falls back to working memory. |
+| `history_truncation` | `str` | `"turns"` | Default truncation mode for [`memory.history()`](api-reference.md#history--native-message-history) — `"turns"` or `"tokens"` (validated at construction). |
+| `history_max_turns` | `int` | `20` | Default turn cap when `history_truncation="turns"` and no explicit `max_turns` is passed. |
+| `history_token_budget` | `int` | `2000` | Default token budget when `history_truncation="tokens"` and no explicit `max_tokens` is passed. |
 | `procedural_max_directives` | `int` | `12` | Cap on active directives injected into context. |
 | `procedural_enabled` | `bool` | `True` | Toggle Layer IV procedural directives in context. |
 | `auto_consolidate` | `bool` | `True` | When on, `ingest` also logs episodic + runs directive detection. |

@@ -39,7 +39,6 @@ Knowing where each knob sits in the pipeline makes the trade-offs concrete. An
 embed(query)
   → SemanticCache.get()  ── hit (sim ≥ cache_threshold) ⇒ short-circuit, return cached
   → KNN over-retrieve  (k = top_k * 2)
-  → 1-hop graph expansion (memory_edges)
   → rank()  =  similarity × importance × decay   (decay uses decay_lambda)
   → filter  score ≥ min_score
   → cap to top_k
@@ -103,8 +102,6 @@ larger `decay_lambda` forgets faster. A few reference points at the default:
 
 Edge cases handled by `time_decay()`: future timestamps clamp `decay` to `1.0`;
 an unparseable timestamp is treated as "now" (no decay) with a logged warning.
-**Graph-expanded neighbors** (1-hop via `memory_edges`) carry no `distance`, so
-they get `similarity = 0` and are ranked by `importance × decay` alone.
 
 > vec0 auxiliary columns do not honor `DEFAULT`, so `timestamp` is supplied
 > explicitly on every insert. If you bypass the writer and omit it, time-decay
@@ -185,7 +182,7 @@ vector store and indirectly out of retrieval.
 [`SemanticCache`](../../src/nexus_memory/core/cache.py) is an in-RAM, thread-safe
 LRU keyed by the **query embedding**, matched by cosine similarity. On
 `assemble`, the query is embedded and looked up first; a hit short-circuits the
-entire read path (no KNN, no graph expansion, no re-ranking).
+entire read path (no KNN, no re-ranking).
 
 | Field | Default | Meaning |
 |-------|---------|---------|
@@ -307,7 +304,7 @@ print(result["latency_ms"], result["meta"]["source_count"])
 
 > **Not a CI gate.** This benchmark is informational only — absolute numbers vary
 > with hardware, store size, embedder, and `top_k`. The
-> [test suite](../../tests/) (159 tests) gates correctness, not
+> [test suite](../../tests/) (216 tests) gates correctness, not
 > latency. Swapping in a heavier embedder (e.g. `SentenceTransformerEmbedder` or
 > a network-bound `OpenAIEmbedder`) shifts the cost onto `embedder.encode()` and
 > will dominate this figure.

@@ -8,14 +8,14 @@ All four sit on a thin, deterministic layer over [`NexusDB`](../../src/nexus_mem
 
 ## How you reach it
 
-`inspect` and `forget` are exposed two ways; `update` and `pin` are **direct-only**.
+All four operations are exposed three ways — via `process(payload)`, via a convenience wrapper, and directly on `memory.transparency` — except `inspect`, whose direct/wrapper form serves the diary view while `process()` does not.
 
 | Operation | Via `process(payload)` | Convenience wrapper | Direct on `memory.transparency` |
 |-----------|------------------------|---------------------|---------------------------------|
 | `inspect` | `{"action": "inspect", ...}` | `memory.inspect(**kw)` | `memory.transparency.inspect(...)` |
 | `forget`  | `{"action": "forget", ...}` | `memory.forget(**kw)` | `memory.transparency.forget(...)` |
-| `update`  | — (not routed) | — | `memory.transparency.update(target_id, new_content)` |
-| `pin`     | — (not routed) | — | `memory.transparency.pin(content, importance=10.0)` |
+| `update`  | `{"action": "update", ...}` | `memory.update(target_id, new_content)` | `memory.transparency.update(target_id, new_content)` |
+| `pin`     | `{"action": "pin", ...}` | `memory.pin(content, importance=10.0)` | `memory.transparency.pin(content, importance=10.0)` |
 
 The `process()`-routed actions are validated by pydantic models (`extra="forbid"`) before reaching the interface; the direct/wrapper calls go straight through. See the [API Reference](api-reference.md) for the full `process()` action catalog, and [Getting Started](getting-started.md) for the lifecycle (`ingest` → `wait` → read → `close`).
 
@@ -112,7 +112,7 @@ The standing Layer IV directives (behavioral rules):
 
 `filter.active_only` (default `True`) controls whether deactivated rules are included. Returns `[]` when no procedural store is wired. For managing these rules (add / list / deactivate), see [Behavioral Rules](../use-cases/behavioral-rules.md).
 
-> **Diary view is wrapper-only.** `inspect(type="diary")` is **not** part of the `process()`/`InspectRequest` surface. Use the [`memory.inspect(type="diary")` wrapper](api-reference.md#convenience-wrapper-methods), which returns `{"status": "success", "data": {"days": [...], "sections": [...]}}` (or an error dict when the diary layer is disabled). See [Hierarchical Diary](../use-cases/hierarchical-diary.md).
+> **Diary view is wrapper-only.** `inspect(type="diary")` is **not** part of the `process()`/`InspectRequest` surface. Use the [`memory.inspect(type="diary")` wrapper](api-reference.md#convenience-wrapper-methods), which returns `{"status": "success", "data": {"sessions": [...], "summary": {...} | None}}` (or an error dict when the diary layer is disabled). See [Hierarchical Diary](../use-cases/hierarchical-diary.md).
 
 ---
 
@@ -124,7 +124,7 @@ def forget(self, fact_id: int | None = None, query: str | None = None) -> dict
 
 Deletes a single memory either by its `id` or by the **best semantic match** of a free-text `query`. Exactly one of `fact_id` / `query` must be supplied — passing both or neither returns an error.
 
-When `query` is given, the text is embedded and resolved through `knn_search(k=1)`; the single closest memory is deleted.
+When `query` is given, the text is embedded and resolved through `knn_search(k=1)`; the single closest memory is deleted — **but only if it clears a relevance floor** (see below).
 
 **Responses:**
 
@@ -132,10 +132,12 @@ When `query` is given, the text is embedded and resolved through `knn_search(k=1
 {"status": "success", "deleted_id": 12}                          # row removed
 
 {"status": "not_found", "deleted_id": None, "fact_id": 12}       # id had no row
-{"status": "not_found", "deleted_id": None, "query": "..."}      # query matched nothing
+{"status": "not_found", "deleted_id": None, "query": "...", "best_similarity": 0.31}  # query below the floor
 
 {"status": "error", "error": "provide exactly one of fact_id or query"}
 ```
+
+> **Relevance floor on the query path.** `knn_search(k=1)` always returns a row on a non-empty store, so without a guard an unrelated `query` would silently delete a real, irreversible memory. The query path therefore deletes only when the best match's cosine similarity (`1 - distance`) is **≥ [`config.forget_min_similarity`](../configuration/nexus-config.md) (default `0.6`)**. Below the floor it returns `{"status": "not_found", ..., "best_similarity": <score>}` and deletes nothing. The `fact_id` path is exact and bypasses the floor.
 
 ```python
 # By explicit id (e.g. one you saw in inspect()):
@@ -155,7 +157,7 @@ memory.forget(query="house keys")
 def update(self, target_id: int, new_content: str) -> dict
 ```
 
-> **Direct-only:** call `memory.transparency.update(...)`. Not exposed via `process()`.
+> **Three ways to call it:** the [`update`](api-reference.md#action-update) `process()` action, the `memory.update(target_id, new_content)` wrapper, or directly as `memory.transparency.update(...)`.
 
 Replaces the `content` of memory `target_id` with `new_content` and **re-embeds** it, so retrieval reflects the corrected text. At the DB layer this is a DELETE + re-INSERT that preserves the same rowid.
 
@@ -181,7 +183,7 @@ if res["status"] == "success":
 def pin(self, content: str, importance: float = 10.0) -> dict
 ```
 
-> **Direct-only:** call `memory.transparency.pin(...)`. Not exposed via `process()`.
+> **Three ways to call it:** the [`pin`](api-reference.md#action-pin) `process()` action, the `memory.pin(content, importance=10.0)` wrapper, or directly as `memory.transparency.pin(...)`.
 
 Inserts a high-importance fact straight into semantic memory, bypassing extraction. It is tagged `metadata={"pinned": True}` and defaults to the maximum importance of `10.0`, so it stays at the top of [time-decay + importance scoring](../architecture/retrieval-and-scoring.md). The `importance` is coerced to `float` before insert.
 

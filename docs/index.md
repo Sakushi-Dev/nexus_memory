@@ -40,9 +40,9 @@ A single `ingest` consolidates across layers, and one `assemble` returns a unifi
 |-------|------|---------------------|------------|------------------|
 | **I** | Working | "What was just said?" | RAM only (ring buffer) | A bounded ring buffer of the last *N* turns (default **50**) for fast recency context, updated synchronously on ingest. |
 | **II** | Episodic | "What happened, verbatim, and when?" | SQLite | Persistent raw dialogue transcript plus deterministic narrative day-summaries. |
-| **III** | Semantic | "What facts do I know?" | SQLite + vectors | Decontextualized fact vectors retrieved by cosine KNN, graph-expanded, then re-ranked by `similarity × importance × exp(-λ · days)`. |
+| **III** | Semantic | "What facts do I know?" | SQLite + vectors | Decontextualized fact vectors retrieved by cosine KNN, then re-ranked by `similarity × importance × exp(-λ · days)`. |
 | **IV** | Procedural | "How should I behave?" | SQLite | Standing behavioral directives (e.g. "Respond in German.") detected automatically and injected into the assembled context. |
-| **V** | Diary *(optional, off by default)* | "What is the long-arc narrative?" | SQLite (only when enabled) | A bounded time-pyramid of model-written summaries, driven through a handoff outbox — the library never calls an LLM itself. |
+| **V** | Diary *(optional, off by default)* | "What is the long-arc narrative?" | SQLite (only when enabled) | A bounded session-pyramid of model-written summaries (one rolling summary per session, folded into a single growing persistent summary), driven through a handoff outbox — the library never calls an LLM itself. |
 
 Layers I–IV fan out from a single `ingest`; the diary (Layer V) is opt-in via `NexusMemory(diary=True)`. The deep design of each layer is covered under [Architecture](#architecture).
 
@@ -57,7 +57,7 @@ How the system is shaped — the layers, the read/write flows, scoring, persiste
 | [Overview](architecture/overview.md) | The five-layer model, the `ingest` and `assemble` flows, and the one-entry-point design. |
 | [Memory layers](architecture/memory-layers.md) | Working, episodic, semantic, and procedural layers in detail. |
 | [Diary layer](architecture/diary-layer.md) | The optional hierarchical diary (Layer V) and its outbox handoff. |
-| [Retrieval & scoring](architecture/retrieval-and-scoring.md) | KNN over-retrieval, 1-hop graph expansion, the `similarity × importance × decay` re-ranker, and the semantic cache. |
+| [Retrieval & scoring](architecture/retrieval-and-scoring.md) | KNN over-retrieval, the `similarity × importance × decay` re-ranker, and the semantic cache. |
 | [Persistence](architecture/persistence.md) | The single SQLite + `sqlite-vec` file, the schema, the shared connection, and the write lock. |
 | [Extension points](architecture/extension-points.md) | The two seams: writer consolidators (write-side) and context providers (read-side). |
 
@@ -100,7 +100,7 @@ Every tunable, in one place.
 | Page | Covers |
 |------|--------|
 | [NexusConfig](configuration/nexus-config.md) | The single config dataclass — scoring, dedup, cache, privacy/security, and per-layer switches. |
-| [DiaryConfig](configuration/diary-config.md) | Layer V settings: `update_every`, `diary_window`, `max_sentences`, `section_size`, `max_sections`, `inject_days`. |
+| [DiaryConfig](configuration/diary-config.md) | Layer V settings: `update_every`, `diary_window`, `max_sentences`, `sessions_per_summary`, `inject_sessions`, `summary_max_sentences`. |
 | [Tuning](configuration/tuning.md) | Practical guidance on scoring (`min_score`, `decay_lambda`, `default_top_k`) and dedup (`redundancy_threshold`). |
 
 ### Changelog
@@ -109,7 +109,7 @@ Release notes, newest first.
 
 | Page | Covers |
 |------|--------|
-| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.3.2](changelog/0.3.2.md). |
+| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.4.0](changelog/0.4.0.md). |
 
 ## Actions at a glance
 
@@ -117,16 +117,18 @@ Every payload carries an `action`, passed to `memory.process(...)`. Full schemas
 
 | action | key fields | returns |
 |---|---|---|
-| `assemble` | `query`, `top_k=5`, `min_score=0.6`, `filters?` | `{status, context_xml, raw_facts, directives, recent_dialogue, meta, latency_ms}` |
-| `ingest` | `interaction:{query, response}`, `metadata?`, `priority?` | `{status:"processing", task_id, estimated_completion_ms}` |
+| `assemble` | `query`, `top_k=5`, `min_score=0.6` | `{status, context_xml, raw_facts, directives, recent_dialogue, meta, latency_ms}` |
+| `ingest` | `interaction:{query, response}`, `metadata?`, `priority?` *(1–10 importance floor)* | `{status:"processing", task_id, estimated_completion_ms}` |
 | `forget` | exactly one of `fact_id` / `query` | `{status, deleted_id}` |
+| `pin` | `content`, `importance=10.0` | `{status, id, content, importance}` |
+| `update` | `target_id`, `new_content` | `{status, updated_id, content}` |
 | `inspect` | `type:"health"\|"episodic"\|"semantic"\|"working"\|"procedural"`, `filter?` | `{status, data}` |
 | `optimize` | — | `{before_bytes, after_bytes, facts}` |
 | `diary` | `day?`, `time_range?`, `store?` | `{status, period, summary, turn_count}` |
 | `rule` | `op:"add"\|"list"\|"deactivate"`, `directive?`, `priority?`, `rule_id?` | add: `{status, rule}` · list: `{status, rules}` · deactivate: `{status, rule_id, deactivated}` |
 | `distill` | — | `{status, promoted:[rule,...]}` |
 | `pending_summaries` | `limit?` *(Layer V only)* | `{status, jobs:[...]}` |
-| `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"daily"\|"section"}` |
+| `submit_summary` | `job_id`, `summary` *(Layer V only)* | `{status, applied?:"session"\|"summary"}` |
 
 ## Install
 

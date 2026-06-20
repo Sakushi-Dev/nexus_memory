@@ -1,6 +1,6 @@
 # Retrieval & Scoring
 
-This page documents the semantic **read path** of Nexus Memory: how a query becomes a ranked set of memories and a prompt-ready `<memory_context>` block. It covers the reader pipeline (embed → cache → over-retrieve KNN → 1-hop graph expansion → multi-signal re-rank → `min_score` filter → XML), the exact scoring formulas and their defaults, and the XML shaping rules.
+This page documents the semantic **read path** of Nexus Memory: how a query becomes a ranked set of memories and a prompt-ready `<memory_context>` block. It covers the reader pipeline (embed → cache → over-retrieve KNN → multi-signal re-rank → `min_score` filter → XML), the exact scoring formulas and their defaults, and the XML shaping rules.
 
 The read path is implemented by [`MemoryReader`](../../src/nexus_memory/layers/semantic/reader.py) over three pure helper modules: [`scoring.py`](../../src/nexus_memory/core/scoring.py), [`xml_format.py`](../../src/nexus_memory/core/xml_format.py), and the [`SemanticCache`](../../src/nexus_memory/core/cache.py). For where this fits in the layered design, see [Memory Layers](memory-layers.md); for the data model behind KNN and the graph, see [Persistence](persistence.md).
 
@@ -20,15 +20,14 @@ print(result["context_xml"])      # <memory_context> ... </memory_context>
 print(result["meta"]["source_count"], "facts")
 ```
 
-Internally the call runs five stages:
+Internally the call runs four stages:
 
 | # | Stage | Implementation | Notes |
 |---|-------|----------------|-------|
 | 1 | **Embed** | `embedder.encode(query)` | Produces the query vector. See [Embedders](../usage/embedders.md). |
 | 2 | **Cache check** | `cache.get(embedding)` | Optional. On a semantic hit, returns the cached result immediately with a refreshed `latency_ms`. |
 | 3 | **Over-retrieve (KNN)** | `db.knn_search(embedding, k=max(1, top_k * 2))` | Retrieves **twice** the requested `top_k` to give the re-ranker headroom. |
-| 4 | **Graph expansion** | `_expand_graph(candidates)` | Adds 1-hop neighbours of the strongest hits to the candidate pool. |
-| 5 | **Re-rank → filter → render** | `scoring.rank(...)` → `min_score` filter → `xml_format.format_as_xml(...)` | Sorts by score, drops rows below `min_score`, caps to `top_k`, renders XML. |
+| 4 | **Re-rank → filter → render** | `scoring.rank(...)` → `min_score` filter → `xml_format.format_as_xml(...)` | Sorts by score, drops rows below `min_score`, caps to `top_k`, renders XML. |
 
 ### Resolving `top_k` and `min_score`
 
@@ -58,18 +57,9 @@ On a hit the cached result dict is returned with `latency_ms` recomputed for the
 {id, content, importance, timestamp, metadata(dict), distance(float)}
 ```
 
-The reader requests `k = top_k * 2` (clamped to a minimum of 1). Over-retrieving lets the multi-signal re-ranker promote an older-but-important or graph-connected fact above a marginally-closer vector match.
+The reader requests `k = top_k * 2` (clamped to a minimum of 1). Over-retrieving lets the multi-signal re-ranker promote an older-but-important fact above a marginally-closer vector match.
 
-### Stage 4 — 1-hop graph expansion
-
-`_expand_graph` walks the typed edges in the `memory_edges` table to pull in *associated* memories that the vector search alone would miss. Behaviour:
-
-- Expansion iterates over the **strongest hits only** — the first `max(1, config.default_top_k)` rows of the distance-ascending KNN pool.
-- For each such hit, `db.neighbors(id)` returns the 1-hop target ids reachable via edges; each new id is fetched with `db.get_memory(id)` and appended to the pool.
-- Neighbours already present in the pool are skipped (deduplicated by `id`).
-- A graph-pulled row carries **no `distance`** (it was not a vector match), so the ranker assigns it `similarity = 0` and scores it on importance and recency alone. Its `final_score` is therefore `0` and it will only survive the `min_score` filter if `min_score <= 0` — expansion widens the *candidate* pool and surfaces association in `raw_facts`, but does not by itself inject zero-similarity neighbours into the final XML under default settings.
-
-### Stage 5 — Re-rank, filter, render
+### Stage 4 — Re-rank, filter, render
 
 `scoring.rank` returns scored **copies** of the candidate rows sorted highest-score-first (see [Scoring model](#the-scoring-model)). The reader then keeps rows at or above `min_score` and caps the survivors to `top_k`:
 
@@ -102,7 +92,7 @@ FinalScore = similarity × importance × decay
 similarity = 1.0 - float(distance)   # clamped to [0, 1]
 ```
 
-Cosine distance from the vector store is converted to a similarity in `[0, 1]`; values are clamped to guard against minor floating-point excursions outside the valid cosine range. Candidates with no `distance` (graph-expanded) are assigned `similarity = 0.0`.
+Cosine distance from the vector store is converted to a similarity in `[0, 1]`; values are clamped to guard against minor floating-point excursions outside the valid cosine range. A candidate with no `distance` is assigned `similarity = 0.0`.
 
 ### Time-decay — `time_decay(timestamp, now=None, lam=0.01)`
 
@@ -201,7 +191,7 @@ Note that `raw_facts[].score` is the full `similarity × importance × decay` pr
 
 - [Architecture Overview](overview.md) — where the reader sits in the request lifecycle.
 - [Memory Layers](memory-layers.md) — the semantic layer and how it composes with diary/procedural context.
-- [Persistence](persistence.md) — the `agent_memory` vector table and the `memory_edges` graph that back KNN and 1-hop expansion.
+- [Persistence](persistence.md) — the `agent_memory` vector table that backs KNN search.
 - [Request / Response](../io/request-response.md) and [Data Flow](../io/data-flow.md) — the `assemble` action contract end-to-end.
 - [Embedders](../usage/embedders.md) — how query and fact vectors are produced.
 - [Tuning](../configuration/tuning.md) — choosing `decay_lambda`, `min_score`, `top_k`, and cache thresholds.

@@ -1,6 +1,6 @@
 # NexusConfig
 
-`NexusConfig` is the single dataclass that every Nexus Memory component is constructed from. This page is the complete field reference: all 17 fields, their types, defaults, and exactly what each one controls. The dataclass lives in [`core/config.py`](../../src/nexus_memory/core/config.py) and is re-exported from the top-level package as `from nexus_memory import NexusConfig`.
+`NexusConfig` is the single dataclass that every Nexus Memory component is constructed from. This page is the complete field reference: all 21 fields, their types, defaults, and exactly what each one controls. The dataclass lives in [`core/config.py`](../../src/nexus_memory/core/config.py) and is re-exported from the top-level package as `from nexus_memory import NexusConfig`.
 
 ## At a glance
 
@@ -26,6 +26,7 @@ All defaults are copied verbatim from the dataclass definition. `DEFAULT_DIM` is
 | `decay_lambda` | `float` | `0.01` | Time-decay rate per day in scoring: `exp(-decay_lambda * days_passed)`. Higher → older facts fade faster. |
 | `min_score` | `float` | `0.6` | Default retrieval score floor for `assemble`. Facts below this combined score are dropped. Overridable per request. |
 | `default_top_k` | `int` | `5` | Default number of facts retrieved per `assemble` query. Overridable per request via `top_k`. |
+| `forget_min_similarity` | `float` | `0.6` | Relevance floor for `forget(query=...)`. The nearest KNN match is only deleted when its cosine similarity (`1 - distance`) is `>=` this value; otherwise `forget` returns `{"status": "not_found"}` and deletes nothing. Guards against deleting an unrelated row on a non-empty store. |
 | `redundancy_threshold` | `float` | `0.90` | Cosine **similarity** above which an incoming fact is treated as a duplicate of an existing one and skipped by the writer. |
 | `semantic_include_assistant` | `bool` | `False` | When `False`, only the **user's** turns become semantic facts; assistant prose still goes to the episodic diary but does not flood the vector store. Set `True` to also mine assistant statements into semantic memory. |
 | `cache_size` | `int` | `128` | Capacity of the semantic LRU query cache. Least-recently-used entries are evicted past this size. |
@@ -35,6 +36,9 @@ All defaults are copied verbatim from the dataclass definition. `DEFAULT_DIM` is
 | `working_memory_max_turns` | `int` | `50` | Capacity of the volatile Layer I RAM buffer, in turns. Oldest turns are evicted when full. |
 | `episodic_recent_turns` | `int` | `6` | How many recent turns are assembled into the `<recent_dialogue>` block of the context. |
 | `episodic_enabled` | `bool` | `True` | Whether Layer II (episodic diary) is active. When `False`, recent dialogue falls back to working memory. |
+| `history_truncation` | `str` | `"turns"` | Default truncation mode for the [`NexusMemory.history`](../usage/api-reference.md) accessor: `"turns"` or `"tokens"`. Validated in `__post_init__` (any other value raises `ValueError`). |
+| `history_max_turns` | `int` | `20` | Default cap (number of turns) applied by the history accessor in `"turns"` mode. |
+| `history_token_budget` | `int` | `2000` | Default token budget applied by the history accessor in `"tokens"` mode. |
 | `procedural_max_directives` | `int` | `12` | Cap on the number of active directives injected into context (priority-ordered). |
 | `procedural_enabled` | `bool` | `True` | Whether Layer IV procedural directives are added to the assembled context. |
 | `auto_consolidate` | `bool` | `True` | When `True`, `ingest` also logs to the episodic layer and runs directive detection (inter-layer transfer). |
@@ -51,6 +55,10 @@ The dataclass groups fields by the subsystem they configure. The same grouping i
 ### Scoring (read path)
 
 `decay_lambda`, `min_score`, and `default_top_k` shape how `assemble` ranks and filters facts. The recency component is `exp(-decay_lambda * days_passed)`; `min_score` is the floor a fact's combined relevance must clear; `default_top_k` bounds how many survive. Per-request `min_score` and `top_k` override the config defaults. See [Retrieval and scoring](../architecture/retrieval-and-scoring.md) for the full formula.
+
+### Transparency / forget
+
+- **`forget_min_similarity`** — the relevance floor for `forget(query=...)`. When you forget by query, the store finds the nearest fact and only deletes it if its cosine similarity (`1 - distance`) is `>= forget_min_similarity`; if the best match falls below the floor, `forget` returns `{"status": "not_found"}` and deletes nothing. This prevents a query that matches nothing in particular from silently deleting the nearest unrelated row. Default `0.6` — moderate enough that genuine paraphrases still match while clearly unrelated queries do not. (Forgetting by explicit `id` is exact and ignores this floor.)
 
 ### Writer (write path)
 
@@ -72,6 +80,7 @@ These mirror the four-layer architecture (see [Memory layers](../architecture/me
 
 - **Layer I — working memory:** `working_memory_max_turns` caps the volatile RAM buffer.
 - **Layer II — episodic:** `episodic_enabled` toggles the durable dialogue layer; `episodic_recent_turns` sets how much recent dialogue is injected into context.
+- **History accessor:** `history_truncation` (`"turns"` | `"tokens"`), `history_max_turns`, and `history_token_budget` set the defaults for the [`NexusMemory.history`](../usage/api-reference.md) accessor — the read-back of recent chat history. They size that accessor, not the `<recent_dialogue>` block (which is governed by `episodic_recent_turns`).
 - **Layer IV — procedural:** `procedural_enabled` toggles standing behavioral rules in context; `procedural_max_directives` caps how many are injected.
 - **Consolidation:** `auto_consolidate` decides whether `ingest` performs the inter-layer transfer work (episodic logging plus rule detection) in addition to the semantic write.
 
@@ -101,7 +110,7 @@ NexusMemory(diary=True)                                   # defaults
 NexusMemory(diary=DiaryConfig(enabled=True, update_every=3))  # custom (pin pre-0.3.5 cadence)
 ```
 
-Its knobs (`update_every`, `diary_window`, `max_sentences`, `section_size`, `max_sections`, `inject_days`) live in [`DiaryConfig`](./diary-config.md), not here.
+Its knobs (`update_every`, `diary_window`, `max_sentences`, `sessions_per_summary`, `inject_sessions`, `summary_max_sentences`) live in [`DiaryConfig`](./diary-config.md), not here.
 
 ### Per-request overrides
 

@@ -178,10 +178,13 @@ CREATE TABLE IF NOT EXISTS memory_edges (
 );
 ```
 
-A lightweight directed graph of 1-hop relations between memories. Edges are added
-idempotently (`INSERT OR IGNORE` on the composite primary key) via
-[`add_edge()`](../../src/nexus_memory/core/db.py), and the reader expands a
-result set by following `neighbors(memory_id)`.
+A lightweight directed graph of 1-hop relations between memories, supported at
+the storage layer (`add_edge()` / `neighbors(memory_id)` in
+[`core/db.py`](../../src/nexus_memory/core/db.py)). The table is **not** populated
+or consulted by the default ingest/assemble path — it is latent scaffolding for
+callers that want to record their own associations, not an advertised retrieval
+feature. The read path is pure KNN + re-rank (see
+[Retrieval & Scoring](retrieval-and-scoring.md)).
 
 #### `system_config` — bookkeeping
 

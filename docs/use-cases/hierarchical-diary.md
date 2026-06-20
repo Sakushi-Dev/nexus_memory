@@ -152,7 +152,7 @@ def secondary_model(job: dict) -> str:
                                 f"I replied: {replied}" if replied else "") if b)
     if prior:
         return f"{prior} Continuing on, {new}." if new else prior
-    return f"Today {new}." if new else "Nothing notable happened today."
+    return f"This session {new}." if new else "Nothing notable happened this session."
 ```
 
 The driver: opt in to the layer, ingest five interactions to cross the `N=5` cadence, wait for the async writer + diary consolidator, then drain and inspect:

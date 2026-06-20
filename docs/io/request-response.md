@@ -31,8 +31,8 @@ if resp["status"] == "success":
     prompt_block = resp["context_xml"]
 ```
 
-Convenience wrapper methods (`inspect`, `forget`, `remember_rule`, `diary`, `wait`,
-`close`, …) mirror the same handlers for direct programmatic use, but the JSON contract
+Convenience wrapper methods (`inspect`, `forget`, `pin`, `update`, `remember_rule`,
+`diary`, `wait`, `close`, …) mirror the same handlers for direct programmatic use, but the JSON contract
 described here is the canonical surface. The wrappers are catalogued in the
 [API reference](../usage/api-reference.md#convenience-wrapper-methods).
 
@@ -49,7 +49,9 @@ rejected**, not silently ignored.
 |----------|---------------|---------|
 | `assemble` | `AssembleRequest` | Build a `<memory_context>` for a query |
 | `ingest` | `IngestRequest` | Store one `(query, response)` exchange |
-| `forget` | `ForgetRequest` | Delete a memory by id or by semantic match |
+| `forget` | `ForgetRequest` | Delete a memory by id or by semantic match (relevance-gated) |
+| `pin` | `PinRequest` | Store/pin a high-importance fact (`importance` default `10.0`) |
+| `update` | `UpdateRequest` | Replace an existing fact's content by `target_id` |
 | `inspect` | `InspectRequest` | Read health / layer contents |
 | `optimize` | `OptimizeRequest` | `VACUUM` + WAL checkpoint |
 | `diary` | `DiaryRequest` | Episodic (Layer II) day summary / reconstruction |
@@ -75,15 +77,20 @@ the [diary layer](../architecture/diary-layer.md) and
 
 ```python
 {"action": "assemble", "query": "where are my keys?", "top_k": 3, "min_score": 0.0}
-{"action": "ingest",   "interaction": {"query": "I prefer Python.", "response": "Noted."}}
+{"action": "ingest",   "interaction": {"query": "I prefer Python.", "response": "Noted."}, "priority": 8}
 {"action": "forget",   "fact_id": 12}
+{"action": "pin",      "content": "User's name is Ada.", "importance": 10.0}
+{"action": "update",   "target_id": 12, "new_content": "User now lives in Munich."}
 {"action": "rule",     "op": "add", "directive": "Respond in German.", "priority": 9}
 ```
 
 A handful of fields are constrained at the schema level — e.g. `IngestRequest.priority`
 and `RuleRequest.priority` are `Field(..., ge=1, le=10)`; `ForgetRequest` enforces
 **exactly one** of `fact_id` / `query` via a model validator; `RuleRequest` requires
-`directive` for `op="add"` and `rule_id` for `op="deactivate"`. The full per-field tables
+`directive` for `op="add"` and `rule_id` for `op="deactivate"`. The optional
+`IngestRequest.priority` is an **importance floor**: every fact extracted from that
+interaction is stored at *at least* `priority`, never lowering a higher heuristic
+importance. The full per-field tables
 live in the [API reference](../usage/api-reference.md#action-index).
 
 ---
@@ -144,11 +151,10 @@ semantic block to
   <recent_dialogue>
     <turn role="user" timestamp="2026-06-17 08:01:55">...</turn>
   </recent_dialogue>
-  <!-- the following two fragments appear ONLY when Layer V (diary) is enabled: -->
-  <diary day="2026-06-16">...yesterday's narrative...</diary>
-  <persistent_summary>
-    <section seq="3" days="2026-06-01..2026-06-07">...</section>
-  </persistent_summary>
+  <!-- the following fragments appear ONLY when Layer V (diary) is enabled: -->
+  <diary session="current" seq="7">...this session so far...</diary>
+  <diary session="sess-0006" seq="6">...the previous session...</diary>
+  <persistent_summary>...the one growing cross-session summary...</persistent_summary>
 </memory_context>
 ```
 
@@ -156,11 +162,11 @@ semantic block to
 
 | Section | Element | Source layer | Notes |
 |---------|---------|--------------|-------|
-| `<procedural>` | `<directive priority="..">` | IV — Procedural | Priority-desc, capped at `procedural_max_directives`; the attribute surfaces the rank position. |
+| `<procedural>` | `<directive priority="..">` | IV — Procedural | Priority-desc, capped at `procedural_max_directives`. The `priority` attribute is a **synthetic list-rank** of the rendered directives (top item = highest), *not* the rule's stored 1–10 priority. |
 | `<semantic>` | `<fact id=".." importance=".." score=".." timestamp="..">` | III — Semantic | KNN + multi-signal re-rank, filtered by `min_score`, capped at `top_k`. |
 | `<recent_dialogue>` | `<turn role=".." timestamp="..">` | II — Episodic (or I — Working fallback) | Last `episodic_recent_turns` turns; falls back to the working buffer when `episodic_enabled` is `False`. |
-| `<diary day="..">` | day narrative | V — Diary *(optional)* | Spliced in by the diary context provider, after `<recent_dialogue>`. |
-| `<persistent_summary>` | `<section seq=".." days="..">` | V — Diary *(optional)* | Multi-day folded sections. |
+| `<diary session=".." seq="..">` | session narrative | V — Diary *(optional)* | The current session (`session="current"`) plus up to `inject_sessions` prior finalized sessions; spliced in by the diary context provider, after `<recent_dialogue>`. |
+| `<persistent_summary>` | session-folded prose | V — Diary *(optional)* | The single growing cross-session summary (no `<section>` children). |
 
 The diary fragments are produced through the generic **context-provider seam**: with no
 providers (the default, diary off), the output is **byte-identical** to the three built-in
@@ -176,7 +182,7 @@ diary fragments.
 This is load-bearing. A backward-compatibility test greps the document with the regex
 `<fact id="(\d+)"` and asserts there are **`≤ top_k`** matches. Any element that needs a
 ranking or grouping attribute uses a *different* attribute name — `priority`, `role`,
-`day`, `seq`, `days` — precisely so the needle count stays exact regardless of how many
+`session`, `seq` — precisely so the needle count stays exact regardless of how many
 directives, turns, or diary sections are present. Integrators that parse fact ids out of
 `context_xml` can rely on this invariant.
 
@@ -240,10 +246,10 @@ will encounter:
 
 | `status` | Where it appears |
 |----------|------------------|
-| `"success"` | `assemble`, `forget` (deleted), `inspect`, `diary`, `rule` (add/list, deactivate that changed a row), `distill`, `pending_summaries`, `submit_summary` (applied) |
+| `"success"` | `assemble`, `forget` (deleted), `pin`, `update`, `inspect`, `diary`, `rule` (add/list, deactivate that changed a row), `distill`, `pending_summaries`, `submit_summary` (applied) |
 | `"processing"` | `ingest` — the durable write is dispatched on a background thread (`{status, task_id, estimated_completion_ms}`) |
 | `"error"` | any caught failure (`{status, error}`) |
-| `"not_found"` | `forget` (no match), `rule` deactivate (no row changed), `submit_summary` (unknown job) |
+| `"not_found"` | `forget` (no id match, or a `query` whose nearest match is below `forget_min_similarity`), `update` (unknown `target_id`), `rule` deactivate (no row changed), `submit_summary` (unknown job) |
 | `"superseded"` | `submit_summary` for a job that was already overtaken by a newer one |
 | *(no `status` key)* | `optimize` — returns `{before_bytes, after_bytes, facts}` only |
 
@@ -256,6 +262,28 @@ Two behaviors deserve emphasis because they affect read-after-write code:
   waits internally) returns. `estimated_completion_ms` is a coarse, non-binding hint
   (always `50`), not a measurement. See [Data Flow](data-flow.md) for the full ingest path.
 - **`optimize` omits `status`.** Branch on its keys, not on a status string.
+
+### Mutation response shapes
+
+The three direct-edit actions return small, action-specific dicts:
+
+```python
+# forget — delete by id, or by relevance-gated semantic match
+{"status": "success",   "deleted_id": 12}
+{"status": "not_found", "deleted_id": None, "query": "...", "best_similarity": 0.41}  # below forget_min_similarity (default 0.6)
+
+# pin — store a high-importance fact (importance default 10.0)
+{"status": "success", "id": 37, "content": "User's name is Ada.", "importance": 10.0}
+
+# update — replace an existing fact's content (re-embedded)
+{"status": "success",   "updated_id": 12, "content": "User now lives in Munich."}
+{"status": "not_found", "updated_id": None, "target_id": 99}        # unknown target_id
+```
+
+`forget(query=...)` is **relevance-gated**: when the nearest match scores below
+`NexusConfig.forget_min_similarity` (default `0.6`), it returns `not_found` instead of
+deleting an unrelated memory. See [transparency](../usage/transparency.md) and
+[nexus configuration](../configuration/nexus-config.md).
 
 ---
 
