@@ -9,7 +9,7 @@ async function includeSections() {
     nodes.map(async (node) => {
       const url = node.getAttribute('data-include');
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { cache: 'no-cache' });
         if (!res.ok) throw new Error(res.status);
         node.innerHTML = await res.text();
       } catch (err) {

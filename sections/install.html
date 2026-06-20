@@ -12,6 +12,7 @@
         <button class="demo-tab is-active" data-tab="pip" role="tab">pip</button>
         <button class="demo-tab" data-tab="venv" role="tab">venv (optional)</button>
         <button class="demo-tab" data-tab="extras" role="tab">extras</button>
+        <button class="demo-tab" data-tab="update" role="tab">update</button>
       </div>
 
       <div class="code" data-tabpane="pip">
@@ -46,6 +47,19 @@ pip install -e <span class="tok-s">".[sentence-transformers]"</span>   <span cla
 pip install -e <span class="tok-s">".[openai]"</span>                  <span class="tok-c"># hosted embeddings</span>
 
 pip install -e <span class="tok-s">".[dev]"</span> &amp;&amp; python -m pytest -q   <span class="tok-c"># run the offline tests · 216 passed ✓</span></code></pre>
+      </div>
+
+      <div class="code" data-tabpane="update" hidden>
+        <div class="code-bar">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="file">terminal</span>
+          <button class="copy" data-copy data-copy-cmd>copy</button>
+        </div>
+        <pre><code><span class="tok-c"># editable install — a `git pull` in the folder IS the whole update:</span>
+<span class="tok-c"># source edits take effect immediately, no reinstall needed.</span>
+cd nexus_memory &amp;&amp; git pull
+
+<span class="tok-c"># re-run `pip install -e .` only if pyproject deps changed (a new release).</span></code></pre>
       </div>
     </div>
 
