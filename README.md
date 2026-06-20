@@ -70,7 +70,7 @@ copy .env.example .env      # then edit .env and paste your OpenRouter key
 
 Get an API key at <https://openrouter.ai/keys>. Pick any model id from
 <https://openrouter.ai/models> via `OPENROUTER_MODEL` in `.env`
-(default `openai/gpt-4o-mini`; a free option is `google/gemini-2.0-flash-exp:free`).
+(default `google/gemini-3.5-flash`; a cheaper option is `google/gemini-2.5-flash`).
 
 **Two models.** `OPENROUTER_MODEL` is the **primary** model — it writes the chat
 reply you see streamed. `OPENROUTER_AUX_MODEL` is a **secondary** model that runs

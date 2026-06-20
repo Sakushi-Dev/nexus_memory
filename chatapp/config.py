@@ -74,7 +74,7 @@ def load_settings() -> Settings:
     """Load ``.env`` next to the demo and fold in the CLI flags."""
     load_dotenv(ROOT / ".env")
     DATA_DIR.mkdir(exist_ok=True)
-    model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip()
+    model = os.getenv("OPENROUTER_MODEL", "google/gemini-3.5-flash").strip()
     return Settings(
         model=model,
         # secondary model for side tasks; falls back to the primary model when unset
