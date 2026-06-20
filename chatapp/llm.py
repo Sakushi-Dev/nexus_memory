@@ -58,6 +58,10 @@ class OpenRouterLLM:
             model=self.model, messages=messages, stream=True
         )
         for chunk in stream:
+            # OpenRouter emits usage/keep-alive frames with an empty `choices`
+            # list; indexing [0] on those would IndexError mid-stream — skip them.
+            if not chunk.choices:
+                continue
             delta = chunk.choices[0].delta.content or ""
             if delta:
                 full.append(delta)

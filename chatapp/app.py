@@ -145,7 +145,7 @@ class ChatApp:
 
     # --- loop ------------------------------------------------------------ #
     def run(self) -> int:
-        trace.enable(True)  # capture internals so /trace can show them on demand
+        trace.enable(self.settings.trace_on)  # --notrace starts with the X-ray off
         _banner(
             self.settings.model,
             self.settings.aux_model,

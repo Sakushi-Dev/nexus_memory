@@ -124,7 +124,7 @@ class NexusTUI(App):
     def on_mount(self) -> None:
         self.title = "Nexus Chat"
         self.sub_title = f"chat {self.settings.model} · aux {self.settings.aux_model}"
-        trace.enable(True)  # capture module internals so /trace can show them
+        trace.enable(self.settings.trace_on)  # --notrace starts with the X-ray off
         self.chat = self.query_one("#chat", RichLog)
         self.chat.write(
             Text(

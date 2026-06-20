@@ -35,9 +35,10 @@ chatapp/
 Each module depends only on the ones above it, so the graph is acyclic. The chat
 app speaks in domain terms (`recall`, `remember`, `pending_diary_jobs`) and never
 sees the module's `process({...})` protocol — only `memory.py` translates. **Two
-frontends** (`tui.py` and `app.py`'s classic loop) share the exact same facade,
-`DiaryHost`, and `commands.dispatch` with its `build_*` renderables — only the
-presentation differs, which is the modularity the demo showcases.
+frontends** (`tui.py` and `app.py`'s classic loop) share the exact same facade
+(`MemoryService`, including the Layer V `drain_diary`) and `commands.dispatch` with
+its `build_*` renderables — only the presentation differs, which is the modularity
+the demo showcases.
 
 ## How memory is wired in
 
@@ -59,7 +60,7 @@ your message ──▶ MemoryService.recall(msg)  ──▶  nexus.process({"ass
 ## Setup
 
 ```powershell
-cd nexus-chat-demo
+cd <this-demo-folder>          # the directory containing chat.py
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .\nexus_memory_pkg
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -73,14 +74,15 @@ Get an API key at <https://openrouter.ai/keys>. Pick any model id from
 
 **Two models.** `OPENROUTER_MODEL` is the **primary** model — it writes the chat
 reply you see streamed. `OPENROUTER_AUX_MODEL` is a **secondary** model that runs
-the **Layer V diary** (the day-summaries Nexus enqueues into its outbox) — so you
-can point that at something cheap/fast while keeping a stronger model for the
+the **Layer V diary** (the session summaries Nexus enqueues into its outbox) — so
+you can point that at something cheap/fast while keeping a stronger model for the
 conversation. Leave `OPENROUTER_AUX_MODEL` unset to reuse the primary model. The
 status footer shows both: `chat <primary> · aux <secondary>`.
 
 The demo deliberately adds **no** summarization of its own — if the diary is off
-(`--no-diary`) or a day has no entry yet, `/diary` shows nothing. That keeps the
-demo an honest mirror of what Nexus actually produced (no fabricated fallback).
+(`--no-diary`) or the current session has no entry yet, `/diary` shows nothing.
+That keeps the demo an honest mirror of what Nexus actually produced (no fabricated
+fallback).
 
 ## Run
 
@@ -101,7 +103,7 @@ demo an honest mirror of what Nexus actually produced (no fabricated fallback).
 The TUI keeps the conversation **pure chat** — memory, diary and trace info never
 appear on their own; you pull them on demand with a slash command. The input box
 is a multi-line editor at the bottom, the answer streams above it, and a status
-footer shows `model · facts · diary · pending · ctx <tokens>/<budget> tok`.
+footer shows `chat <model> · aux <model> · facts · diary · pending · ctx <tokens>/<budget> tok`.
 **Keys:** `Enter` sends · `Shift+Enter` (or `Ctrl+J`) inserts a newline
 (compose/paste multi-line) · type `/` for the command palette, `Tab` completes ·
 `Ctrl+Q` quits.
@@ -123,8 +125,8 @@ Type `/` to see them inline; `/help` lists them all.
 | `/recall <query>` | III·IV | show the facts + directives recalled for a query |
 | `/memory` | II | list everything the assistant remembers (episodic) |
 | `/stats` | — | memory health (fact count, db size) |
-| `/diary [day]` | V | the Layer V diary entry for a day (default: latest; nothing if absent/off) |
-| `/pyramid` | V | the diary time-pyramid: daily diaries + persistent sections + outbox |
+| `/diary` | V | the Layer V diary entry for the current session (nothing if absent/off) |
+| `/pyramid` | V | the diary pyramid: session diaries + persistent summary + outbox |
 | `/transcript [day]` | II | raw reconstructed dialogue transcript |
 | `/rules` | IV | list active procedural directives |
 | `/rule <text>` | IV | add a standing procedural directive |
@@ -150,7 +152,7 @@ demand (and `/recall <query>` to see exactly what memory would inject for a quer
 2. Say *"sprich ab jetzt deutsch mit mir"* — watch the trace detect a **procedural directive**.
 3. `/quit`, then restart `chat.py`.
 4. Ask *"was weißt du über mich?"* → it recalls across the restart **and** keeps answering in German.
-5. `/diary` for the narrative day summary; `/rules` to see the standing directive; `/forget Berlin` to delete a fact.
+5. `/diary` for the narrative session summary; `/rules` to see the standing directive; `/forget Berlin` to delete a fact.
 
 ## Notes
 
