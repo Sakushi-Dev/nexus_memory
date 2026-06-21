@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import pytest
 
 from nexus_memory import NexusMemory
+from nexus_memory.core.auxbus.config import AuxConfig
 
 
 # --------------------------------------------------------------------------- #
@@ -37,9 +38,12 @@ def nexus(db_path):
     """A fully wired multi-layer NexusMemory on a tmp database (offline defaults).
 
     Uses the orchestrator's default offline mocks (HashingEmbedder summarizer /
-    detector) so the scenario is deterministic and never touches the network.
+    detector) so the scenario is deterministic and never touches the network. Aux
+    is DISABLED so procedural directive mining runs the inline regex synchronously
+    at ingest (``source="auto"``, immediate) — the path these end-to-end
+    assertions rely on. The aux-LLM procedural path is covered in test_aux_bus.
     """
-    nm = NexusMemory(db_path=db_path)
+    nm = NexusMemory(db_path=db_path, aux=AuxConfig(enabled=False))
     try:
         yield nm
     finally:

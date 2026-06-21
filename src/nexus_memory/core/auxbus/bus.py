@@ -68,6 +68,9 @@ class AuxBus:
         """
         self.db = db
         self._handlers: dict[str, "JobHandler"] = {}
+        # Process-lifetime counter of malformed results a handler could not parse
+        # (surfaced via stats() -> inspect(type="aux")). Not persisted.
+        self._parse_failures = 0
         self._initialize()
 
     def _initialize(self) -> None:
@@ -90,6 +93,10 @@ class AuxBus:
         for kind in handler.kinds:
             self._handlers[kind] = handler
 
+    def note_parse_failure(self) -> None:
+        """Increment the parse-failure counter (a handler hit malformed output)."""
+        self._parse_failures += 1
+
     # ================================================================== #
     # summarization_jobs (outbox)
     # ================================================================== #
@@ -101,16 +108,21 @@ class AuxBus:
         prior_summary: str | None,
         items: list,
         advance_to: int | None = None,
+        input_text: str | None = None,
     ) -> str:
         """Enqueue a pending job and return its ``job_id``.
 
         Any existing ``pending`` job with the same ``(kind, target)`` is first
         marked ``superseded`` (the one-pending-per-target invariant). The new job
-        stores ``{"prior_summary": ..., "items": ...}`` as ``input_json``.
+        stores ``{"prior_summary": ..., "items": ..., "input_text": ...}`` as
+        ``input_json``. ``input_text`` is the optional Nexus-pre-rendered string
+        the host model consumes (``None`` for diary kinds, which render their own).
         """
         job_id = str(uuid.uuid4())
         now = _utc_now_str()
-        input_json = json.dumps({"prior_summary": prior_summary, "items": items})
+        input_json = json.dumps(
+            {"prior_summary": prior_summary, "items": items, "input_text": input_text}
+        )
         with self.db.lock:
             self.db.conn.execute(
                 "UPDATE summarization_jobs SET status = 'superseded' "
@@ -306,13 +318,25 @@ class AuxBus:
         done = self.db.conn.execute(
             "SELECT 1 FROM summarization_jobs WHERE status = 'done' LIMIT 1"
         ).fetchone()
-        return {
+        out = {
             "pending": sum(by_kind.values()),
             "by_kind": by_kind,
             "oldest": oldest,
             "aux_connected": done is not None,
             "kinds_registered": sorted(self._handlers.keys()),
+            "parse_failures": self._parse_failures,
         }
+        # Procedural-via signal: "aux" once a procedural_extract job has ever
+        # completed; "regex-fallback" while procedural is aux-enabled (handler
+        # registered) but no real drain has landed yet; omitted entirely when
+        # procedural is not on the bus at all.
+        if "procedural_extract" in self._handlers:
+            proc_done = self.db.conn.execute(
+                "SELECT 1 FROM summarization_jobs "
+                "WHERE kind = 'procedural_extract' AND status = 'done' LIMIT 1"
+            ).fetchone()
+            out["procedural_via"] = "aux" if proc_done is not None else "regex-fallback"
+        return out
 
     # ================================================================== #
     # helpers
@@ -343,6 +367,7 @@ class AuxBus:
             "prompt": raw["prompt"],
             "prior_summary": io.get("prior_summary"),
             "input": io.get("items", []),
+            "input_text": io.get("input_text"),
         }
 
     @staticmethod

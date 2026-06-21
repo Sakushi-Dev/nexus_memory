@@ -164,8 +164,16 @@ def _run_session(
 # 1. off-by-default
 # --------------------------------------------------------------------------- #
 def test_off_by_default_no_diary_tables_or_jobs(db_path):
-    """Without a DiaryConfig the layer is never built: no tables, no jobs."""
-    mem = NexusMemory(db_path=db_path)
+    """Without a DiaryConfig (and with aux disabled) the layer is never built: no
+    tables, no jobs.
+
+    At 0.6.0 the aux bus is ALWAYS-ON by default, so the legacy "no bus / no
+    summarization_jobs" shape now requires an explicit ``aux=False`` (and no
+    diary). That is exactly the regime this test pins.
+    """
+    from nexus_memory.core.auxbus.config import AuxConfig
+
+    mem = NexusMemory(db_path=db_path, aux=AuxConfig(enabled=False))
     try:
         # The diary layer object was never constructed.
         assert mem._diary is None

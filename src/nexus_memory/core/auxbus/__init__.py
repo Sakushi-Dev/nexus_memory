@@ -13,6 +13,7 @@ imports or calls any network/LLM SDK.
 from __future__ import annotations
 
 from .bus import AuxBus
+from .config import AuxConfig
 from .handler import JobHandler
 
-__all__ = ["AuxBus", "JobHandler"]
+__all__ = ["AuxBus", "AuxConfig", "JobHandler"]

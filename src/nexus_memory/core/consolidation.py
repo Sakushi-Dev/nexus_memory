@@ -33,6 +33,8 @@ from ..layers.procedural.procedural import DirectiveDetector, MockDirectiveDetec
 
 if TYPE_CHECKING:  # pragma: no cover - imports for typing only
     from .db import NexusDB
+    from .auxbus.bus import AuxBus
+    from .auxbus.config import AuxConfig
     from ..layers.episodic.episodic import EpisodicStore
     from ..layers.procedural.procedural import ProceduralStore
 
@@ -123,21 +125,69 @@ class EpisodicConsolidator(Consolidator):
 
 
 class ProceduralConsolidator(Consolidator):
-    """Detects standing behavioral rules and stores them in Layer IV.
+    """Mines standing behavioral rules into Layer IV (aux LLM by default at 0.6.0).
 
-    Delegates to :meth:`ProceduralStore.detect_and_store`, which runs the store's
-    :class:`~nexus_memory.procedural.DirectiveDetector` over the interaction and
-    upserts any directives found with ``source="auto"``.
+    Two regimes (selected by the aux config + the shared bus):
+
+    * **aux ON** (default): enqueue a ``procedural_extract`` job on the shared bus
+      (the singleton ``target='procedural'`` coalesces bursts) so the host's aux
+      LLM mines ADD/UPDATE/DELETE/NOOP ops. Until the FIRST such job has reached
+      ``status='done'``, ALSO run the inline regex (the *bridge*) so a host that
+      has not drained yet still gets the basic tone/persona rules.
+    * **aux OFF** (``aux=False`` / ``procedural_extraction=False`` / no bus): run
+      the inline regex synchronously via :meth:`ProceduralStore.detect_and_store`
+      — the exact 0.4.2/0.5.x behavior (``source="auto"``, immediate).
     """
 
-    def __init__(self, procedural: "ProceduralStore") -> None:
+    def __init__(
+        self,
+        procedural: "ProceduralStore",
+        bus: "AuxBus | None" = None,
+        aux_config: "AuxConfig | None" = None,
+    ) -> None:
         """Create the consolidator.
 
         Args:
             procedural: The :class:`~nexus_memory.procedural.ProceduralStore`
                 that detects and persists directives.
+            bus: The shared :class:`~nexus_memory.core.auxbus.bus.AuxBus`, or
+                ``None`` when no bus exists (then the inline regex always runs).
+            aux_config: The resolved :class:`~nexus_memory.core.auxbus.config.AuxConfig`
+                (gates the aux path).
         """
         self._procedural = procedural
+        self._bus = bus
+        self._aux_config = aux_config
+        # Set-once-true cache for the bridge: True once a procedural_extract job
+        # has completed (then the inline regex stops on the next consolidation).
+        self._bridge_done = False
+
+    def _aux_on(self) -> bool:
+        """Whether procedural directive mining should ride the aux bus."""
+        return (
+            self._bus is not None
+            and self._aux_config is not None
+            and self._aux_config.enabled
+            and self._aux_config.procedural_extraction
+            and "procedural_extract" in self._bus.registry
+        )
+
+    def _bridge_satisfied(self) -> bool:
+        """Return (and cache, set-once-true) whether the first aux job has landed.
+
+        Once a ``procedural_extract`` job reaches ``status='done'``, the cached
+        flag flips to ``True`` and stays there — so the cheap ``SELECT`` is only
+        ever issued while still in the bridge phase.
+        """
+        if self._bridge_done:
+            return True
+        row = self._bus.db.conn.execute(
+            "SELECT 1 FROM summarization_jobs "
+            "WHERE kind = 'procedural_extract' AND status = 'done' LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            self._bridge_done = True
+        return self._bridge_done
 
     def consolidate(
         self,
@@ -145,9 +195,31 @@ class ProceduralConsolidator(Consolidator):
         metadata: dict | None,
         written_ids: list[int],
     ) -> None:
-        """Detect directives in the interaction and persist any that are found."""
+        """Mine directives from the interaction (aux enqueue, or inline regex)."""
         query = str(interaction.get("query", ""))
         response = str(interaction.get("response", ""))
+
+        if self._aux_on():
+            handler = self._bus.registry["procedural_extract"]
+            prior = self._procedural.list_rules(active_only=True)
+            prompt, prior_summary, items, input_text = handler.build_input(
+                {"query": query, "response": response, "prior_directives": prior}
+            )
+            self._bus.enqueue(
+                kind="procedural_extract",
+                target="procedural",  # singleton -> bursts coalesce to 1 pending
+                prompt=prompt,
+                prior_summary=prior_summary,
+                items=items,
+                advance_to=None,
+                input_text=input_text,
+            )
+            # Bridge: until the first procedural_extract job has completed, also
+            # run the inline regex so an undrained host still gets basic rules.
+            if not self._bridge_satisfied():
+                self._procedural.detect_and_store(query, response)
+            return
+
         stored = self._procedural.detect_and_store(query, response)
         if stored:
             logger.debug(

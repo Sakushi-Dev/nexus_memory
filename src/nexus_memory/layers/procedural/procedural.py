@@ -227,7 +227,8 @@ class ProceduralStore:
             directive: The imperative rule text (e.g. ``"Keep answers concise."``).
             category: One of tone/format/persona/other (else ``"other"``).
             priority: 1..10, higher applied first. Clamped into range.
-            source: ``"manual"`` or ``"auto"``.
+            source: ``"manual"`` (host/API), ``"auto"`` (inline regex detector),
+                or ``"aux"`` (the aux-LLM ``DirectiveExtractHandler``).
 
         Returns:
             The stored rule as a dict (see :meth:`_row_to_dict`).
@@ -293,6 +294,30 @@ class ProceduralStore:
             self.db.conn.commit()
         changed = cur.rowcount > 0
         logger.debug("ProceduralStore.deactivate(%s) -> %s", rule_id, changed)
+        return changed
+
+    def deactivate_by_directive(self, directive: str) -> bool:
+        """Mark a rule inactive by its directive text. Returns ``True`` if a row changed.
+
+        Mirrors :meth:`deactivate` but keys on the UNIQUE ``directive`` column;
+        used by the aux ``DELETE`` op (the LLM countermands a directive by its
+        text, not by an internal id). No schema change — just an ``UPDATE`` on the
+        existing ``active`` column.
+        """
+        directive = (directive or "").strip()
+        if not directive:
+            return False
+        with self.db.lock:
+            cur = self.db.conn.execute(
+                "UPDATE procedural_rules SET active = 0 "
+                "WHERE directive = ? AND active = 1",
+                (directive,),
+            )
+            self.db.conn.commit()
+        changed = cur.rowcount > 0
+        logger.debug(
+            "ProceduralStore.deactivate_by_directive(%r) -> %s", directive, changed
+        )
         return changed
 
     # ------------------------------------------------------------------ #

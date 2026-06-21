@@ -25,6 +25,7 @@ import re
 import pytest
 
 from nexus_memory import NexusMemory
+from nexus_memory.core.auxbus.config import AuxConfig
 
 # The needle invariant: only semantic facts carry id="..".
 _FACT_ID_RE = re.compile(r'<fact id="(\d+)"')
@@ -39,9 +40,13 @@ def nexus(db_path):
     """A NexusMemory pointed at a tmp DB, with offline mock summarizer/detector.
 
     Uses the orchestrator defaults (HashingEmbedder + MockSummarizer +
-    MockDirectiveDetector) so no model downloads or network access occur.
+    MockDirectiveDetector) so no model downloads or network access occur. Aux is
+    DISABLED so procedural mining runs the inline regex synchronously on ingest
+    (immediate, ``source="auto"``) — these assembly tests seed a directive via an
+    ingest and assert it surfaces, so they need the deterministic inline path
+    rather than relying on the aux bridge.
     """
-    nm = NexusMemory(db_path=db_path)
+    nm = NexusMemory(db_path=db_path, aux=AuxConfig(enabled=False))
     try:
         yield nm
     finally:

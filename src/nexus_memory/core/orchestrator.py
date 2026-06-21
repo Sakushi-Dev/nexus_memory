@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # type-only; never costs an import when the diary is unused
     from ..layers.diary.config import DiaryConfig
+    from .auxbus.config import AuxConfig
 
 from .cache import SemanticCache
 from .config import NexusConfig
@@ -94,6 +95,15 @@ class NexusMemory:
         ``diary=True`` for the defaults, or a
         :class:`~nexus_memory.layers.diary.config.DiaryConfig` for custom knobs.
         ``None``/``False`` (the default) leaves the layer off and unconstructed.
+    aux:
+        Configuration for the shared auxiliary-job bus (0.6.0). ``None``/``True``
+        → :class:`~nexus_memory.core.auxbus.config.AuxConfig` defaults (enabled;
+        procedural directive mining rides the aux LLM). ``False`` →
+        ``AuxConfig(enabled=False)``: no aux handlers and procedural falls back to
+        the inline regex (byte-identical to 0.4.2). An ``AuxConfig`` is used as-is.
+        The bus is constructed whenever the aux subsystem is enabled OR the diary
+        needs it; a non-diary host with ``aux=False`` keeps the legacy "no bus / no
+        ``summarization_jobs``" shape.
     """
 
     def __init__(
@@ -106,6 +116,7 @@ class NexusMemory:
         summarizer: Summarizer | None = None,
         detector: DirectiveDetector | None = None,
         diary: "DiaryConfig | bool | None" = None,
+        aux: "AuxConfig | bool | None" = None,
     ) -> None:
         # Build/override the config so db_path always reflects the argument.
         if config is None:
@@ -147,30 +158,54 @@ class NexusMemory:
             include_assistant=config.semantic_include_assistant
         )
 
-        # Inter-layer transfer: the writer fans each ingested interaction out to
-        # the episodic + procedural layers after the semantic writes complete.
-        self.consolidators = [
-            EpisodicConsolidator(self.episodic, lambda: self.session_id),
-            ProceduralConsolidator(self.procedural),
-        ]
+        # Resolve the aux config (0.6.0). None/True -> defaults (enabled);
+        # False -> AuxConfig(enabled=False); an AuxConfig is used as-is.
+        self.aux_config = self._resolve_aux_config(aux)
 
-        # Optional Layer V (diary). Built ONLY when the diary is opted in;
-        # otherwise self._diary stays None and nothing is constructed (no tables,
-        # no provider, no routing) — byte-identical legacy behavior. The import is
-        # local so the diary package is never loaded when unused.
-        #
-        # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
-        # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
+        # The bus is ALWAYS-ON at 0.6.0 (hoisted out of diary-scope): it exists
+        # whenever EITHER the aux subsystem is enabled OR the diary needs it. A
+        # non-diary host that sets aux=False AND no diary keeps the legacy "no bus
+        # / no summarization_jobs" shape. The bus is constructed BEFORE the diary
+        # block so the diary reuses this same shared bus.
         self._diary = None
         self._aux = None
         diary_config = self._resolve_diary_config(diary)
-        if diary_config is not None and diary_config.enabled:
+        diary_on = diary_config is not None and diary_config.enabled
+        if self.aux_config.enabled or diary_on:
             from .auxbus.bus import AuxBus
-            from ..layers.diary.layer import DiaryLayer
 
-            # The bus is DIARY-SCOPED at 0.5.0: constructed only when the diary is
-            # enabled, so a non-diary DB still has NO summarization_jobs table.
             self._aux = AuxBus(self.db)
+
+        # Procedural-via-aux: register the directive-extraction handler on the bus
+        # when the aux subsystem is enabled and procedural extraction is on. This
+        # is what makes "procedural_extract" a known kind (and flips the
+        # consolidator onto the aux path).
+        if self._aux is not None and (
+            self.aux_config.enabled and self.aux_config.procedural_extraction
+        ):
+            from ..layers.procedural.handler import DirectiveExtractHandler
+
+            self._aux.register(DirectiveExtractHandler(self.procedural, self._aux))
+
+        # Inter-layer transfer: the writer fans each ingested interaction out to
+        # the episodic + procedural layers after the semantic writes complete. The
+        # procedural consolidator gets the shared bus + aux config so it can enqueue
+        # a procedural_extract job (default) or fall back to the inline regex.
+        self.consolidators = [
+            EpisodicConsolidator(self.episodic, lambda: self.session_id),
+            ProceduralConsolidator(
+                self.procedural, bus=self._aux, aux_config=self.aux_config
+            ),
+        ]
+
+        # Optional Layer V (diary). Built ONLY when the diary is opted in;
+        # otherwise self._diary stays None and nothing diary-specific is
+        # constructed. The diary reuses the SHARED self._aux bus (built above).
+        #
+        # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
+        # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
+        if diary_on:
+            from ..layers.diary.layer import DiaryLayer
 
             diary_layer = DiaryLayer(
                 self.db,
@@ -239,6 +274,22 @@ class NexusMemory:
 
             return DiaryConfig(enabled=True)
         return diary
+
+    @staticmethod
+    def _resolve_aux_config(aux: "AuxConfig | bool | None") -> "AuxConfig":
+        """Normalize the ``aux`` argument into an :class:`AuxConfig`.
+
+        ``None``/``True`` → ``AuxConfig()`` (enabled defaults); ``False`` →
+        ``AuxConfig(enabled=False)``; an ``AuxConfig`` is returned as-is. The
+        import is local so importing the orchestrator costs nothing extra.
+        """
+        from .auxbus.config import AuxConfig
+
+        if aux is None or aux is True:
+            return AuxConfig()
+        if aux is False:
+            return AuxConfig(enabled=False)
+        return aux
 
     def _on_ingest_complete(
         self, task_id: str, written_ids: list[int] | None

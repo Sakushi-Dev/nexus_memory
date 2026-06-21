@@ -15,6 +15,7 @@ Everything here is offline and deterministic; no LLM is ever called.
 from __future__ import annotations
 
 from nexus_memory.core.auxbus.bus import AuxBus
+from nexus_memory.core.auxbus.config import AuxConfig
 from nexus_memory.core.orchestrator import NexusMemory
 from nexus_memory.layers.diary.config import DiaryConfig
 
@@ -55,9 +56,11 @@ def test_drain_aux_unknown_kind_safe(db_path, tmp_path):
     finally:
         mem.close()
 
-    # A NON-diary instance: the bus is diary-scoped, so all three report disabled.
+    # A NON-diary instance with aux DISABLED: no bus, so all three report disabled.
+    # (At 0.6.0 the bus is always-on by DEFAULT, so the disabled shape now needs
+    # an explicit aux=False.)
     other_path = str(tmp_path / "no_diary.db")
-    plain = NexusMemory(db_path=other_path)
+    plain = NexusMemory(db_path=other_path, aux=AuxConfig(enabled=False))
     try:
         disabled = {"status": "error", "error": "aux bus not enabled"}
         assert plain.pending_aux_jobs() == disabled
@@ -135,8 +138,8 @@ def test_inspect_aux_stats(db_path, tmp_path):
     finally:
         mem.close()
 
-    # Non-diary instance: the bus is diary-scoped, so inspect(type='aux') errors.
-    plain = NexusMemory(db_path=str(tmp_path / "no_diary.db"))
+    # Non-diary instance with aux DISABLED: no bus, so inspect(type='aux') errors.
+    plain = NexusMemory(db_path=str(tmp_path / "no_diary.db"), aux=AuxConfig(enabled=False))
     try:
         assert plain.inspect(type="aux") == {
             "status": "error",
@@ -173,8 +176,16 @@ def test_drain_aux_kind_routing(db_path):
 
 
 def test_drain_aux_default_route(db_path):
-    """A {'default': run_job} map catches a kind with no explicit entry."""
-    mem = NexusMemory(db_path=db_path, diary=DiaryConfig(enabled=True))
+    """A {'default': run_job} map catches a kind with no explicit entry.
+
+    Procedural-via-aux is disabled here so the only pending kind is the diary
+    ``session`` job — this test pins the default-route behavior on a single kind.
+    """
+    mem = NexusMemory(
+        db_path=db_path,
+        diary=DiaryConfig(enabled=True),
+        aux=AuxConfig(procedural_extraction=False),
+    )
     try:
         _ingest_n(mem, 6)
         assert mem.pending_aux_jobs(kind="session")
@@ -182,5 +193,162 @@ def test_drain_aux_default_route(db_path):
         res = mem.drain_aux({"default": lambda job: "Default-routed narrative."})
         assert res["applied"] == 1
         assert mem.pending_aux_jobs(kind="session") == []
+    finally:
+        mem.close()
+
+
+# --------------------------------------------------------------------------- #
+# 6. procedural-via-aux (0.6.0) — the default-flip pipeline
+# --------------------------------------------------------------------------- #
+import json  # noqa: E402 - kept next to the procedural-via-aux tests it serves
+
+
+def _ingest_one(mem: NexusMemory, query: str, response: str = "ok") -> None:
+    """Ingest a single interaction and flush the background writer/consolidators."""
+    mem.process(
+        {"action": "ingest", "interaction": {"query": query, "response": response}}
+    )
+    mem.wait()
+
+
+def test_procedural_via_aux_applies_ops(db_path):
+    """Default aux (on): a drained procedural_extract ADD op stores an aux rule.
+
+    The mock run_job returns a canned JSON ops array (deterministic; no LLM); the
+    resulting rule is stored with ``source="aux"`` (vs. the regex ``"auto"``).
+    """
+    mem = NexusMemory(db_path=db_path)  # default: aux on, procedural via aux
+    try:
+        _ingest_one(mem, "please be concise")
+        # A procedural_extract job is pending (the singleton on the bus).
+        assert mem.pending_aux_jobs(kind="procedural_extract")
+
+        ops = [
+            {
+                "op": "ADD",
+                "directive": "Keep answers concise.",
+                "category": "tone",
+                "priority": 6,
+            }
+        ]
+        res = mem.drain_aux(
+            {"procedural_extract": lambda job: json.dumps(ops)},
+            kind="procedural_extract",
+        )
+        assert res["applied"] == 1
+
+        rules = mem.list_rules()
+        concise = next(r for r in rules if r["directive"] == "Keep answers concise.")
+        assert concise["source"] == "aux"
+        assert concise["active"] == 1
+        assert "Keep answers concise." in mem.procedural.directives()
+    finally:
+        mem.close()
+
+
+def test_procedural_aux_language_excluded_is_host_contract(db_path):
+    """A reply-language interaction yields [] from a correct model -> no rule.
+
+    This tests the PIPELINE (the prompt-level reply-language exclusion is the
+    model's job, here pinned by a deterministic mock returning an empty ops array).
+    """
+    mem = NexusMemory(db_path=db_path)
+    try:
+        _ingest_one(mem, "Bitte antworte ab jetzt immer auf Deutsch.")
+        assert mem.pending_aux_jobs(kind="procedural_extract")
+
+        # The model correctly emits no directive for a reply-language wish.
+        res = mem.drain_aux(
+            {"procedural_extract": lambda job: "[]"}, kind="procedural_extract"
+        )
+        assert res["applied"] == 1  # the empty-ops job still applies (marks done)
+
+        assert mem.list_rules(active_only=False) == []
+        assert not any(
+            "Deutsch" in r["directive"] for r in mem.list_rules(active_only=False)
+        )
+    finally:
+        mem.close()
+
+
+def test_procedural_aux_malformed_json_is_all_noop(db_path):
+    """A malformed result -> parse_result yields [] (no rule); the job still applies
+    and inspect(type='aux').parse_failures increments. Never raises."""
+    mem = NexusMemory(db_path=db_path)
+    try:
+        # A query the inline-regex bridge does NOT match, so the ONLY path that
+        # could store a rule is the (malformed) aux drain.
+        _ingest_one(mem, "please always cite primary sources")
+        assert mem.pending_aux_jobs(kind="procedural_extract")
+        assert mem.list_rules(active_only=False) == []  # bridge mined nothing
+
+        res = mem.drain_aux(
+            {"procedural_extract": lambda job: "not json {"},
+            kind="procedural_extract",
+        )
+        # The drain submitted the job (it is marked done -> counted as applied),
+        # but no directive was stored.
+        assert res["applied"] == 1
+        assert mem.list_rules(active_only=False) == []
+
+        data = mem.inspect(type="aux")["data"]
+        assert data["parse_failures"] >= 1
+        # No procedural_extract job stays pending (it was consumed).
+        assert mem.pending_aux_jobs(kind="procedural_extract") == []
+    finally:
+        mem.close()
+
+
+def test_procedural_bridge_then_aux(db_path):
+    """Before any drain the inline regex bridges a rule; after a successful
+    procedural_extract drain, inspect reports procedural_via == 'aux'."""
+    mem = NexusMemory(db_path=db_path)  # default aux on
+    try:
+        # BRIDGE: no drain yet -> the inline regex still mines the basic rule.
+        _ingest_one(mem, "bitte fasse dich kurz")
+        bridged = next(
+            r for r in mem.list_rules() if r["directive"] == "Keep answers concise."
+        )
+        assert bridged["source"] == "auto"  # mined by the inline regex bridge
+        # Pre-drain the procedural-via signal is the regex fallback.
+        assert mem.inspect(type="aux")["data"]["procedural_via"] == "regex-fallback"
+
+        # A successful procedural_extract drain flips the signal to 'aux'.
+        ops = [
+            {
+                "op": "ADD",
+                "directive": "Keep answers concise.",
+                "category": "tone",
+                "priority": 6,
+            }
+        ]
+        mem.drain_aux(
+            {"procedural_extract": lambda job: json.dumps(ops)},
+            kind="procedural_extract",
+        )
+        assert mem.inspect(type="aux")["data"]["procedural_via"] == "aux"
+    finally:
+        mem.close()
+
+
+def test_aux_disabled_uses_inline_regex(db_path):
+    """aux=AuxConfig(enabled=False): a directive appears immediately at ingest
+    (source='auto'); the aux facades report the disabled shape."""
+    mem = NexusMemory(db_path=db_path, aux=AuxConfig(enabled=False))
+    try:
+        _ingest_one(mem, "bitte fasse dich kurz")
+
+        # The rule is present immediately (no drain needed), mined by the regex.
+        concise = next(
+            r for r in mem.list_rules() if r["directive"] == "Keep answers concise."
+        )
+        assert concise["source"] == "auto"
+        assert concise["active"] == 1
+
+        # The aux bus is not built -> the facades report disabled.
+        assert mem.pending_aux_jobs() == {
+            "status": "error",
+            "error": "aux bus not enabled",
+        }
     finally:
         mem.close()

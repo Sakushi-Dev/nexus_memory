@@ -1,12 +1,15 @@
 # Design: Unified Aux-LLM Seam ("AuxBus")
 
-> **Status:** Approved design, rollout in progress. **0.5.0 + 0.5.1 shipped**
-> — the AuxBus seam + `JobHandler` registry, the diary riding the bus, the
-> `drain_aux` / `pending_aux_jobs` / `submit_aux_job` API, plus (0.5.1)
-> `inspect(type="aux")` observability and `{kind: run_job}` routing. All zero
-> behavior change. **0.6.0 (procedural-via-aux) is next.** Two core decisions
-> are locked (see [Locked decisions](#locked-decisions)); a handful of details
-> remain open (see [Open decisions](#open-decisions)).
+> **Status:** Core rollout COMPLETE. **0.5.0 + 0.5.1 + 0.6.0 shipped** — the
+> AuxBus seam + `JobHandler` registry, the diary riding the bus, the
+> `drain_aux` / `pending_aux_jobs` / `submit_aux_job` API, `inspect(type="aux")`
+> observability + `{kind: run_job}` routing (0.5.1), and **procedural-via-aux**
+> (0.6.0): `AuxConfig`, the always-on bus, `DirectiveExtractHandler` + Mem0
+> prompt with the semantic reply-language exclusion, and the regex bridge. The
+> original language-vs-rule case is solved (verified on a real aux model). Two
+> core decisions are locked (see [Locked decisions](#locked-decisions)); the
+> remaining items (see [Open decisions](#open-decisions)) are optional future
+> work (e.g. `procedural_distill`, similarity dedup, retry columns).
 
 ## Goal
 
@@ -301,7 +304,7 @@ Strict backward compat via kind-**pinned** thin facades + zero-DDL:
 |---|---|---|---|
 | **0.5.0** ✅ shipped | Lift diary job-SQL → `core/auxbus/bus.py` + `JobHandler` ABC; convert apply into `DiarySessionHandler`/`DiarySummaryHandler`; add `drain_aux`/`pending_aux_jobs`/`submit_aux_job` with unknown-kind safety; `drain_diary` etc. stay pinned to `('session','summary')`. Keep table name `summarization_jobs`. Bus is diary-scoped at 0.5.0. | none | shipped: 223 tests green + demo diary live-run verified |
 | **0.5.1** ✅ shipped | `inspect(type="aux")` snapshot (`pending`/`by_kind`/`oldest`/`aux_connected`/`kinds_registered`); `{kind: run_job}` map routing in `drain_aux`. No constructor `run_job`, no auto-drain. (The regex-bridge / `procedural_via` parts land with 0.6.0, when procedural joins the bus.) | none | shipped: 226 tests green |
-| **0.6.0** | `AuxConfig` (defaults on); `DirectiveExtractHandler` + Mem0 prompt (language excluded, regex-form cleanup DELETEs); `deactivate_by_directive()`; consolidator enqueues; regex demoted to fallback + bridge; pre-render `input_text` for all kinds; update demo to consume `input_text` + call `drain_aux`; adversarial tests; live-test in demo. | none | procedural rules now from aux by default |
+| **0.6.0** ✅ shipped | `AuxConfig` (defaults on); `DirectiveExtractHandler` + Mem0 prompt (language excluded); `deactivate_by_directive()`; consolidator enqueues; regex demoted to fallback + bridge; `input_text` rendering; demo consumes `input_text` + `drain_aux`; adversarial tests; live demo run. | none | shipped: 231 tests green + real aux-model demo run (language case solved) |
 | **0.7.0+** | *(optional, only on approval)* `idx_jobs_kind` if volume warrants; cosmetic rename `summarization_jobs → aux_jobs`; retry columns; first net-new handler kind; optionally fold `/distill` onto the bus. | flagged | — |
 
 ## Risks & mitigations

@@ -17,12 +17,20 @@ from __future__ import annotations
 import pytest
 
 from nexus_memory import NexusMemory
+from nexus_memory.core.auxbus.config import AuxConfig
 
 
 @pytest.fixture
 def nexus(db_path):
-    """A fully wired NexusMemory backed by a tmp on-disk DB; closed on teardown."""
-    nm = NexusMemory(db_path=db_path)
+    """A fully wired NexusMemory backed by a tmp on-disk DB; closed on teardown.
+
+    Aux is DISABLED here so procedural directive mining runs the inline regex
+    synchronously inside the ingest (``source="auto"``, immediate) — the
+    deterministic, offline path these consolidation/distill tests assert against.
+    At 0.6.0 the default flips procedural onto the aux LLM (no inline rule until a
+    drain, except the bridge); the aux path is covered separately in test_aux_bus.
+    """
+    nm = NexusMemory(db_path=db_path, aux=AuxConfig(enabled=False))
     try:
         yield nm
     finally:
