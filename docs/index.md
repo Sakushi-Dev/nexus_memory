@@ -110,7 +110,7 @@ Release notes, newest first.
 
 | Page | Covers |
 |------|--------|
-| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.4.2](changelog/0.4.2.md). |
+| [Changelog](changelog/index.md) | Per-version release notes; the latest is [0.5.0](changelog/0.5.0.md). |
 
 ## Actions at a glance
 

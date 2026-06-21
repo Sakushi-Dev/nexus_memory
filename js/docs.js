@@ -38,6 +38,7 @@ const DOCS = [
   { id: 'configuration/tuning',             title: 'Tuning',              file: 'configuration/tuning.md' },
 
   { id: 'changelog/index',                  title: 'Changelog',           file: 'changelog/index.md' },
+  { id: 'changelog/0.5.0',                  title: 'v0.5.0',              file: 'changelog/0.5.0.md' },
   { id: 'changelog/0.4.2',                  title: 'v0.4.2',              file: 'changelog/0.4.2.md' },
   { id: 'changelog/0.4.1',                  title: 'v0.4.1',              file: 'changelog/0.4.1.md' },
   { id: 'changelog/0.4.0',                  title: 'v0.4.0',              file: 'changelog/0.4.0.md' },
@@ -56,7 +57,7 @@ const GROUPS = [
   { label: 'Usage',         ids: ['usage/getting-started', 'usage/api-reference', 'usage/configuration', 'usage/embedders', 'usage/transparency'] },
   { label: 'Use cases',     ids: ['use-cases/agent-memory', 'use-cases/multiple-agents', 'use-cases/behavioral-rules', 'use-cases/hierarchical-diary', 'use-cases/privacy-and-encryption'] },
   { label: 'Configuration', ids: ['configuration/nexus-config', 'configuration/diary-config', 'configuration/tuning'] },
-  { label: 'Changelog',     ids: ['changelog/index', 'changelog/0.4.2', 'changelog/0.4.1', 'changelog/0.4.0', 'changelog/0.3.5', 'changelog/0.3.4', 'changelog/0.3.3', 'changelog/0.3.2', 'changelog/0.3.1'] },
+  { label: 'Changelog',     ids: ['changelog/index', 'changelog/0.5.0', 'changelog/0.4.2', 'changelog/0.4.1', 'changelog/0.4.0', 'changelog/0.3.5', 'changelog/0.3.4', 'changelog/0.3.3', 'changelog/0.3.2', 'changelog/0.3.1'] },
 ];
 
 const byId = Object.fromEntries(DOCS.map((d) => [d.id, d]));
