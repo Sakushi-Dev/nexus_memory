@@ -110,7 +110,14 @@ copy .env.example .env        # then edit .env and paste your key
 
 > **macOS/Linux:** use `./.venv/bin/python` instead of `.\.venv\Scripts\python.exe`, and `cp .env.example .env`.
 
-For semantic recall in the demo, enable the local embedder with `--embedder fastembed` (downloads a small model once, then runs offline). See the demo's own `README.md` for the model settings and the slash-command reference.
+For semantic recall in the demo, first install the local embedder, then run with `--embedder fastembed` (it downloads a small model once, then runs offline):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install "fastembed[cpu]"   # or: -e ".\nexus_memory_pkg[local-embeddings]"
+.\.venv\Scripts\python.exe chat.py --embedder fastembed
+```
+
+> A store is bound to the embedder it was created with — to switch, start a fresh DB or re-embed with `python -m nexus_memory.reindex --db data\chat_memory.db --backend fastembed`. See the demo's own `README.md` for model settings + the slash-command reference.
 
 ## The layer model
 
