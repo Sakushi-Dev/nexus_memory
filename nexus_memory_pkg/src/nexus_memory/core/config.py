@@ -13,6 +13,10 @@ from dataclasses import dataclass
 # without a full re-embed/migration.
 DEFAULT_DIM: int = 768
 
+# Allowed values for NexusConfig.embedder_backend. "hashing" is the default,
+# zero-dependency, offline embedder; "fastembed" is the opt-in neural backend.
+_ALLOWED_EMBEDDER_BACKENDS: frozenset[str] = frozenset({"hashing", "fastembed"})
+
 
 @dataclass
 class NexusConfig:
@@ -24,6 +28,18 @@ class NexusConfig:
 
     db_path: str = "nexus_memory.db"
     dim: int = DEFAULT_DIM
+
+    # --- embedder (0.7.0) ---
+    # Backend selection for the semantic embedder. "hashing" (default) is the
+    # zero-dependency, offline, lexical feature-hashing embedder; "fastembed"
+    # opts in to a locally-downloaded neural model (BAAI/bge-base-en-v1.5,
+    # 768-dim) via the optional `nexus-memory[local-embeddings]` extra. These are
+    # NOT schema changes — they only choose which embedder the orchestrator
+    # constructs. An explicit `embedder=` passed to NexusMemory still wins.
+    embedder_backend: str = "hashing"      # "hashing" | "fastembed"
+    embedder_model: str | None = None      # override the backend's default model
+    embedder_cache_dir: str | None = None  # where the downloaded model is cached
+    embedder_offline: bool = False         # require a warm cache; never hit the network
 
     # --- scoring ---
     decay_lambda: float = 0.01          # exp(-lambda * days_passed)
@@ -79,9 +95,15 @@ class NexusConfig:
     auto_consolidate: bool = True       # ingest also logs episodic + detects rules
 
     def __post_init__(self) -> None:
-        """Validate the history-accessor truncation mode."""
+        """Validate the history-accessor truncation mode and embedder backend."""
         if self.history_truncation not in {"turns", "tokens"}:
             raise ValueError(
                 "history_truncation must be 'turns' or 'tokens', "
                 f"got {self.history_truncation!r}"
+            )
+        if self.embedder_backend not in _ALLOWED_EMBEDDER_BACKENDS:
+            raise ValueError(
+                "embedder_backend must be one of "
+                f"{sorted(_ALLOWED_EMBEDDER_BACKENDS)}, got "
+                f"{self.embedder_backend!r}"
             )

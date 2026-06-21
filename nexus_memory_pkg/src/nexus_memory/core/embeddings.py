@@ -119,6 +119,82 @@ class SentenceTransformerEmbedder(Embedder):
         return [float(x) for x in vec]
 
 
+# ===================================================================== #
+# FastEmbed (local neural) adapter — opt-in, lazily imported (0.7.0)
+# ===================================================================== #
+class FastEmbedEmbedder(Embedder):
+    """Local-first neural embedder backed by ``fastembed`` (ONNX, torch-free).
+
+    Downloads a model once (default ``BAAI/bge-base-en-v1.5``, dim = 768) into a
+    local cache and then runs fully offline — it is NOT an API/vendor embedder.
+    ``fastembed`` is imported lazily inside ``__init__`` so importing this module
+    never costs the optional dependency; a missing install raises a helpful
+    :class:`ImportError` pointing at the ``nexus-memory[local-embeddings]`` extra.
+
+    The ``bge-*-en-v1.5`` family already returns L2-normalized vectors, so
+    :func:`_l2_normalize` is applied exactly once (idempotent) — never twice.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-base-en-v1.5",
+        *,
+        cache_dir: str | None = None,
+        offline: bool = False,
+        **kwargs: object,
+    ) -> None:
+        try:
+            from fastembed import TextEmbedding  # type: ignore
+        except ImportError as exc:
+            raise ImportError(
+                "FastEmbedEmbedder requires the optional 'fastembed' dependency. "
+                'Install it with: pip install "nexus-memory[local-embeddings]"'
+            ) from exc
+
+        if not offline:
+            # First use may pull ~210 MB; surface a one-line heads-up so a long
+            # construction is not mistaken for a hang.
+            logger.info(
+                "FastEmbedEmbedder loading model %r (downloads ~210 MB on first "
+                "use; cache_dir=%s)",
+                model_name,
+                cache_dir or "<default HF cache>",
+            )
+
+        try:
+            self._model = TextEmbedding(  # type: ignore[arg-type]
+                model_name=model_name,
+                cache_dir=cache_dir,
+                local_files_only=offline,
+                **kwargs,
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raise with actionable guidance
+            if offline:
+                raise RuntimeError(
+                    f"FastEmbedEmbedder(offline=True) could not load {model_name!r} "
+                    f"from a local cache (cache_dir={cache_dir!r}). Warm the cache "
+                    "once online (construct it with offline=False) before going "
+                    "offline."
+                ) from exc
+            raise
+
+        self.model_name = model_name
+        # Probe the real vector width from a tiny embedding (do not assume 768).
+        self.dim = len(next(iter(self._model.embed(["__dim_probe__"]))))
+
+    def encode(self, text: str) -> list[float]:
+        """Encode ``text`` into a (single-) L2-normalized vector."""
+        vec = next(iter(self._model.embed([text])))
+        return _l2_normalize([float(x) for x in vec])
+
+    def encode_batch(self, texts: list[str]) -> list[list[float]]:
+        """Encode a batch using fastembed's native streaming ``embed`` generator."""
+        return [
+            _l2_normalize([float(x) for x in vec])
+            for vec in self._model.embed(list(texts))
+        ]
+
+
 class OpenAIEmbedder(Embedder):
     """Optional adapter around the OpenAI embeddings API (lazy import).
 

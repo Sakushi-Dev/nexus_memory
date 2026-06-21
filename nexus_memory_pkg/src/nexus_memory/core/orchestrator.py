@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # type-only; never costs an import when the diary is unused
     from ..layers.diary.config import DiaryConfig
+    from .auxbus.config import AuxConfig
 
 from .cache import SemanticCache
 from .config import NexusConfig
@@ -33,7 +34,8 @@ from .consolidation import (
 )
 from .context import ContextAssembler
 from .db import NexusDB
-from .embeddings import Embedder, HashingEmbedder
+from .embeddings import Embedder, FastEmbedEmbedder, HashingEmbedder
+from . import provenance
 from ..layers.episodic.episodic import EpisodicStore
 from ..layers.semantic.extraction import FactExtractor, MockFactExtractor, SpeakerAwareExtractor
 from .models import parse_request
@@ -53,6 +55,27 @@ logger = logging.getLogger(__name__)
 # embedding + a single KNN dedup probe per extracted fact; this is a coarse,
 # non-binding estimate, not a measured value.
 _INGEST_ESTIMATE_MS = 50
+
+
+# ===================================================================== #
+# Declarative embedder construction (0.7.0)
+# ===================================================================== #
+def _build_embedder(config: NexusConfig) -> Embedder:
+    """Construct the embedder declaratively from ``config.embedder_backend``.
+
+    ``"fastembed"`` -> :class:`FastEmbedEmbedder` (default model
+    ``BAAI/bge-base-en-v1.5``, honouring ``embedder_model`` /
+    ``embedder_cache_dir`` / ``embedder_offline``); anything else -> the
+    zero-dependency :class:`HashingEmbedder` sized to ``config.dim``. An explicit
+    ``embedder=`` passed to :class:`NexusMemory` bypasses this and always wins.
+    """
+    if config.embedder_backend == "fastembed":
+        return FastEmbedEmbedder(
+            config.embedder_model or "BAAI/bge-base-en-v1.5",
+            cache_dir=config.embedder_cache_dir,
+            offline=config.embedder_offline,
+        )
+    return HashingEmbedder(dim=config.dim)
 
 
 def _today_str() -> str:
@@ -94,6 +117,15 @@ class NexusMemory:
         ``diary=True`` for the defaults, or a
         :class:`~nexus_memory.layers.diary.config.DiaryConfig` for custom knobs.
         ``None``/``False`` (the default) leaves the layer off and unconstructed.
+    aux:
+        Configuration for the shared auxiliary-job bus (0.6.0). ``None``/``True``
+        → :class:`~nexus_memory.core.auxbus.config.AuxConfig` defaults (enabled;
+        procedural directive mining rides the aux LLM). ``False`` →
+        ``AuxConfig(enabled=False)``: no aux handlers and procedural falls back to
+        the inline regex (byte-identical to 0.4.2). An ``AuxConfig`` is used as-is.
+        The bus is constructed whenever the aux subsystem is enabled OR the diary
+        needs it; a non-diary host with ``aux=False`` keeps the legacy "no bus / no
+        ``summarization_jobs``" shape.
     """
 
     def __init__(
@@ -106,6 +138,7 @@ class NexusMemory:
         summarizer: Summarizer | None = None,
         detector: DirectiveDetector | None = None,
         diary: "DiaryConfig | bool | None" = None,
+        aux: "AuxConfig | bool | None" = None,
     ) -> None:
         # Build/override the config so db_path always reflects the argument.
         if config is None:
@@ -114,14 +147,33 @@ class NexusMemory:
             config.db_path = db_path
         self.config = config
 
-        # Default to the dependency-free hashing embedder, sized to the config.
-        self.embedder: Embedder = embedder or HashingEmbedder(dim=config.dim)
+        # Embedder: an explicit `embedder=` always wins; otherwise build it
+        # declaratively from the config (hashing default; opt-in fastembed). The
+        # default path is byte-identical to the pre-0.7.0 HashingEmbedder wiring.
+        self.embedder: Embedder = embedder or _build_embedder(config)
 
         # Storage + cache.
         self.db = NexusDB(config)
         self.cache = SemanticCache(
             maxsize=config.cache_size, threshold=config.cache_threshold
         )
+
+        # --- embedder dim guard + provenance (0.7.0) ---------------------- #
+        # Guard against the REAL stored vector dim (provenance row if present,
+        # else config.dim for a fresh DB) — this covers BOTH the injected
+        # (`embedder=`) and the config-built paths. A mismatched embedder must
+        # never reach a write.
+        real_dim = provenance.stored_dim(self.db, fallback=config.dim)
+        if int(self.embedder.dim) != int(real_dim):
+            raise ValueError(
+                f"embedder dim {self.embedder.dim} != DB dim {real_dim}; pick a "
+                f"{real_dim}-dim model or run python -m nexus_memory.reindex"
+            )
+        # Reconcile provenance: stamp a fresh DB, accept a matching one, and
+        # refuse a different backend/model (no silent vector-space mixing). On a
+        # fresh stamp, flush the read cache so nothing stale survives.
+        if provenance.reconcile(self.db, self.embedder):
+            self.cache.clear()
 
         # Privacy filter (shared with the writer for pre-embedding masking).
         self.pii_filter = PIIFilter(enabled=config.pii_filter_enabled)
@@ -147,23 +199,53 @@ class NexusMemory:
             include_assistant=config.semantic_include_assistant
         )
 
+        # Resolve the aux config (0.6.0). None/True -> defaults (enabled);
+        # False -> AuxConfig(enabled=False); an AuxConfig is used as-is.
+        self.aux_config = self._resolve_aux_config(aux)
+
+        # The bus is ALWAYS-ON at 0.6.0 (hoisted out of diary-scope): it exists
+        # whenever EITHER the aux subsystem is enabled OR the diary needs it. A
+        # non-diary host that sets aux=False AND no diary keeps the legacy "no bus
+        # / no summarization_jobs" shape. The bus is constructed BEFORE the diary
+        # block so the diary reuses this same shared bus.
+        self._diary = None
+        self._aux = None
+        diary_config = self._resolve_diary_config(diary)
+        diary_on = diary_config is not None and diary_config.enabled
+        if self.aux_config.enabled or diary_on:
+            from .auxbus.bus import AuxBus
+
+            self._aux = AuxBus(self.db)
+
+        # Procedural-via-aux: register the directive-extraction handler on the bus
+        # when the aux subsystem is enabled and procedural extraction is on. This
+        # is what makes "procedural_extract" a known kind (and flips the
+        # consolidator onto the aux path).
+        if self._aux is not None and (
+            self.aux_config.enabled and self.aux_config.procedural_extraction
+        ):
+            from ..layers.procedural.handler import DirectiveExtractHandler
+
+            self._aux.register(DirectiveExtractHandler(self.procedural, self._aux))
+
         # Inter-layer transfer: the writer fans each ingested interaction out to
-        # the episodic + procedural layers after the semantic writes complete.
+        # the episodic + procedural layers after the semantic writes complete. The
+        # procedural consolidator gets the shared bus + aux config so it can enqueue
+        # a procedural_extract job (default) or fall back to the inline regex.
         self.consolidators = [
             EpisodicConsolidator(self.episodic, lambda: self.session_id),
-            ProceduralConsolidator(self.procedural),
+            ProceduralConsolidator(
+                self.procedural, bus=self._aux, aux_config=self.aux_config
+            ),
         ]
 
         # Optional Layer V (diary). Built ONLY when the diary is opted in;
-        # otherwise self._diary stays None and nothing is constructed (no tables,
-        # no provider, no routing) — byte-identical legacy behavior. The import is
-        # local so the diary package is never loaded when unused.
+        # otherwise self._diary stays None and nothing diary-specific is
+        # constructed. The diary reuses the SHARED self._aux bus (built above).
         #
         # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
         # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
-        self._diary = None
-        diary_config = self._resolve_diary_config(diary)
-        if diary_config is not None and diary_config.enabled:
+        if diary_on:
             from ..layers.diary.layer import DiaryLayer
 
             diary_layer = DiaryLayer(
@@ -171,6 +253,7 @@ class NexusMemory:
                 self.episodic,
                 diary_config,
                 session=lambda: self.session_id,
+                aux=self._aux,
             )
             # Append AFTER episodic+procedural so the diary consolidator runs last.
             self.consolidators.append(diary_layer.consolidator)
@@ -232,6 +315,22 @@ class NexusMemory:
 
             return DiaryConfig(enabled=True)
         return diary
+
+    @staticmethod
+    def _resolve_aux_config(aux: "AuxConfig | bool | None") -> "AuxConfig":
+        """Normalize the ``aux`` argument into an :class:`AuxConfig`.
+
+        ``None``/``True`` → ``AuxConfig()`` (enabled defaults); ``False`` →
+        ``AuxConfig(enabled=False)``; an ``AuxConfig`` is returned as-is. The
+        import is local so importing the orchestrator costs nothing extra.
+        """
+        from .auxbus.config import AuxConfig
+
+        if aux is None or aux is True:
+            return AuxConfig()
+        if aux is False:
+            return AuxConfig(enabled=False)
+        return aux
 
     def _on_ingest_complete(
         self, task_id: str, written_ids: list[int] | None
@@ -451,6 +550,10 @@ class NexusMemory:
             if self._diary is None:
                 return {"status": "error", "error": "diary layer not enabled"}
             return {"status": "success", "data": self._diary.state()}
+        if kw.get("type") == "aux":
+            if self._aux is None:
+                return {"status": "error", "error": "aux bus not enabled"}
+            return {"status": "success", "data": self._aux.stats()}
         return self.transparency.inspect(**kw)
 
     def pending_summaries(self, limit: int | None = None) -> list[dict] | dict:
@@ -505,6 +608,48 @@ class NexusMemory:
                     job.get("session"),
                 )
         return applied
+
+    def pending_aux_jobs(
+        self, kind: "str | None" = None, limit: int | None = None
+    ) -> list[dict] | dict:
+        """Return uniform aux-job handoff dicts across all kinds (host drains these).
+
+        Returns an error dict when the aux bus is not enabled (diary-scoped at
+        0.5.0, so disabled means the diary is off).
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled"}
+        from .auxbus.bus import AuxBus
+
+        return [AuxBus.default_handoff(j) for j in self._aux.pending(kind, limit)]
+
+    def submit_aux_job(self, job_id: str, result: str) -> dict:
+        """Hand a model output back to the aux bus; idempotent registry dispatch.
+
+        Returns an error dict when the aux bus is not enabled.
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled"}
+        return self._aux.submit(job_id, result)
+
+    def drain_aux(
+        self,
+        run_job: "Callable[[dict], str] | Mapping[str, Callable[[dict], str]]",
+        kind: "str | None" = None,
+        limit: int | None = None,
+    ) -> dict:
+        """Drain pending aux jobs through a host model across all kinds.
+
+        ``run_job`` is either a single ``(job) -> str`` callable, or a
+        ``{kind: callable}`` mapping for per-kind routing (with an optional
+        ``"default"`` key) — e.g. route a strict-JSON kind to a JSON-reliable
+        model without a second outbox. Returns
+        ``{"status", "applied", "skipped", "by_kind"}``, or an error dict (with
+        ``applied: 0``) when the aux bus is not enabled.
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled", "applied": 0}
+        return self._aux.drain(run_job, kind=kind, limit=limit)
 
     def forget(self, **kw: Any) -> dict:
         """Convenience wrapper around :meth:`TransparencyInterface.forget`."""

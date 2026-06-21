@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .core.config import DEFAULT_DIM, NexusConfig
 from .core.context import ContextAssembler
-from .core.embeddings import Embedder, HashingEmbedder
+from .core.embeddings import Embedder, FastEmbedEmbedder, HashingEmbedder
 from .core.orchestrator import NexusMemory
 from .layers.diary import DiaryConfig, DiaryLayer, DiaryStore
 from .layers.episodic.episodic import EpisodicStore
@@ -21,7 +21,7 @@ from .layers.semantic.extraction import (
 )
 from .layers.working.working import WorkingMemory
 
-__version__ = "0.4.1"
+__version__ = "0.7.0"
 
 __all__ = [
     "__version__",
@@ -30,6 +30,7 @@ __all__ = [
     "DEFAULT_DIM",
     "Embedder",
     "HashingEmbedder",
+    "FastEmbedEmbedder",
     "FactExtractor",
     "SpeakerAwareExtractor",
     "MockFactExtractor",

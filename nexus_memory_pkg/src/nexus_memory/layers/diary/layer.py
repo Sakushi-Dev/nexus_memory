@@ -27,6 +27,7 @@ from .scheduler import DiaryScheduler
 from .store import DiaryStore
 
 if TYPE_CHECKING:  # avoid an import cycle at runtime
+    from ...core.auxbus.bus import AuxBus
     from ...core.db import NexusDB
     from ..episodic.episodic import EpisodicStore
     from .config import DiaryConfig
@@ -45,6 +46,8 @@ class DiaryLayer:
             True for this layer to be constructed).
         session: Zero-arg callable returning the current ``session_id`` (the
             orchestrator injects ``lambda: self.session_id``).
+        aux: The shared :class:`~nexus_memory.core.auxbus.bus.AuxBus` (owns the job
+            outbox + dispatch). The diary registers its handlers on it.
     """
 
     def __init__(
@@ -53,15 +56,23 @@ class DiaryLayer:
         episodic: "EpisodicStore",
         diary_config: "DiaryConfig",
         session: "Callable[[], str]",
+        aux: "AuxBus",
     ) -> None:
         self.db = db
         self.episodic = episodic
         self.config = diary_config
 
         self.store = DiaryStore(db)
-        self.scheduler = DiaryScheduler(self.store, db, diary_config, session)
+        self.scheduler = DiaryScheduler(self.store, aux, db, diary_config, session)
+        self.bus = aux
         self.consolidator = DiaryConsolidator(self.scheduler)
         self.provider = DiaryContextProvider(self.store, diary_config, session)
+
+        # The diary is the first handler set ON the shared bus.
+        from .handlers import DiarySessionHandler, DiarySummaryHandler
+
+        aux.register(DiarySessionHandler(self.scheduler))
+        aux.register(DiarySummaryHandler(self.scheduler))
         logger.debug("DiaryLayer constructed (diary layer active).")
 
     # ------------------------------------------------------------------ #
@@ -83,7 +94,7 @@ class DiaryLayer:
     def route(self, action: str, request) -> dict:
         """Handle a validated diary request and return the response dict."""
         if action == "pending_summaries":
-            jobs = self.store.pending_jobs(request.limit)
+            jobs = self.bus.pending(kind=("session", "summary"), limit=request.limit)
             return {
                 "status": "success",
                 "jobs": [self._to_handoff(j) for j in jobs],

@@ -249,6 +249,26 @@ class NexusDB:
         return int(row["n"])
 
     # ------------------------------------------------------------------ #
+    # system_config (key/value bookkeeping) — embedder provenance (0.7.0)
+    # ------------------------------------------------------------------ #
+    def get_config(self, key: str) -> str | None:
+        """Return the ``system_config`` value for ``key`` (``None`` if absent)."""
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT value FROM system_config WHERE key = ?", (key,)
+            ).fetchone()
+        return None if row is None else row["value"]
+
+    def set_config(self, key: str, value: str) -> None:
+        """Insert or replace a ``system_config`` row (no DDL — plain upsert)."""
+        with self.lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            self.conn.commit()
+
+    # ------------------------------------------------------------------ #
     # maintenance
     # ------------------------------------------------------------------ #
     def vacuum(self) -> None:

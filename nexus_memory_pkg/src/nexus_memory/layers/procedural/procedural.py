@@ -1,9 +1,13 @@
 """Layer IV — Procedural Memory (persistent behavioral directives).
 
 Procedural memory stores *standing behavioral rules* the agent should apply to
-every future response — e.g. "Respond in German.", "Keep answers concise." or
-"Address the user as Sam.". Unlike semantic facts (what is true) or episodic
-turns (what was said), procedural rules encode *how to behave*.
+every future response — e.g. "Keep answers concise." or "Address the user as
+Sam.". Unlike semantic facts (what is true) or episodic turns (what was said),
+procedural rules encode *how to behave*.
+
+Reply *language* is deliberately NOT a procedural concern: Nexus never mines or
+stores a language directive (the host application owns that choice), so the
+detector below recognizes tone and persona patterns only.
 
 Two pieces live here:
 
@@ -37,8 +41,10 @@ if TYPE_CHECKING:  # pragma: no cover - import for typing only
 logger = logging.getLogger(__name__)
 
 # Allowed rule categories. Anything else is normalized to ``"other"``.
+# Note: there is intentionally no ``"language"`` category — reply language is the
+# host application's concern, never a stored procedural directive.
 _VALID_CATEGORIES: frozenset[str] = frozenset(
-    {"language", "tone", "format", "persona", "other"}
+    {"tone", "format", "persona", "other"}
 )
 
 # DDL for this layer's own table. Idempotent so construction is safe to repeat.
@@ -84,33 +90,25 @@ class MockDirectiveDetector(DirectiveDetector):
     the **user's** text (``response`` is ignored). Detection is case-insensitive.
     Recognized patterns:
 
-    * ``sprich/antworte/red ... deutsch``  -> ``"Respond in German."`` (language)
-    * ``... in english ...`` / ``answer in english`` -> ``"Respond in English."``
     * ``fasse dich kurz`` / ``be concise``  -> ``"Keep answers concise."`` (tone)
     * ``nenn mich X`` / ``call me X``        -> ``"Address the user as X."`` (persona)
-    * ``immer/always ...`` / ``nie/never ...`` -> generic standing rule (other)
 
-    Returns ``[]`` when nothing matches. Order is stable: language, tone,
-    persona, then generic always/never rules.
+    Only these two specific, safe patterns are mined. There is deliberately NO
+    generic ``always/never`` catch-all: a free-form sentence cannot be reliably
+    classified as a standing rule by regex — "antworte immer auf Deutsch" (a
+    reply-language wish) is indistinguishable from "zitiere immer Quellen" (a
+    genuine rule), so mining it both leaked reply-language directives and
+    over-suppressed real ones. Reply *language* is never Nexus's concern; a host
+    that wants richer rule mining plugs in its own LLM-backed
+    :class:`DirectiveDetector`.
+
+    Returns ``[]`` when nothing matches. Order is stable: tone, then persona.
     """
-
-    # --- language: German ---
-    # e.g. "sprich ab jetzt deutsch", "antworte auf deutsch", "red deutsch".
-    _DE_LANG = re.compile(
-        r"\b(?:sprich|antworte|antwort|red|rede|schreib|schreibe)\b[^.!?\n]*\bdeutsch\b",
-        re.IGNORECASE,
-    )
-    # --- language: English (DE trigger "auf englisch" or EN "answer in english") ---
-    _EN_LANG = re.compile(
-        r"\b(?:sprich|antworte|antwort|red|rede|schreib|schreibe|respond|answer|reply|speak|talk|write)\b"
-        r"[^.!?\n]*\b(?:english|englisch)\b",
-        re.IGNORECASE,
-    )
 
     # --- tone: concise ---
     # The German phrasings allow words between "dich" and "kurz" (e.g.
-    # "fasse dich ab jetzt bitte kurz"), mirroring how the language patterns
-    # tolerate intervening words, so natural insertions don't defeat detection.
+    # "fasse dich ab jetzt bitte kurz") via ``[^.!?\n]*``, so natural insertions
+    # don't defeat detection; the match still stops at sentence punctuation.
     _CONCISE = re.compile(
         r"\bfass(?:e)?\s+dich\b[^.!?\n]*\bkurz\b"   # "fass(e) dich [...] kurz"
         r"|\bhalt(?:e)?\s+dich\b[^.!?\n]*\bkurz\b"  # "halt(e) dich [...] kurz"
@@ -134,10 +132,6 @@ class MockDirectiveDetector(DirectiveDetector):
         "please", "the", "just", "now", "ok", "okay", "kindly",
     })
 
-    # --- generic standing rules: always / never ---
-    _ALWAYS = re.compile(r"\b(?:immer|always)\b", re.IGNORECASE)
-    _NEVER = re.compile(r"\b(?:nie|niemals|never)\b", re.IGNORECASE)
-
     def detect(self, query: str, response: str) -> list[dict]:
         """Detect standing directives in the user's ``query`` (ignores ``response``)."""
         if not query or not query.strip():
@@ -153,14 +147,6 @@ class MockDirectiveDetector(DirectiveDetector):
                 found.append(
                     {"directive": directive, "category": category, "priority": priority}
                 )
-
-        # Language. Check English first: an explicit "english" mention should not
-        # be shadowed by a stray "deutsch" token, and vice versa they are mutually
-        # specific via their own patterns.
-        if self._EN_LANG.search(text):
-            _add("Respond in English.", "language", 8)
-        if self._DE_LANG.search(text):
-            _add("Respond in German.", "language", 8)
 
         # Tone.
         if self._CONCISE.search(text):
@@ -179,22 +165,9 @@ class MockDirectiveDetector(DirectiveDetector):
             if name:
                 _add(f"Address the user as {name}.", "persona", 7)
 
-        # Generic standing rules. Only emit when not already captured by a more
-        # specific rule above, to avoid noisy duplicates for the same sentence.
-        if not found:
-            if self._ALWAYS.search(text):
-                _add(f"Standing rule: {self._normalize(text)}", "other", 5)
-            elif self._NEVER.search(text):
-                _add(f"Standing rule: {self._normalize(text)}", "other", 5)
-
         if found:
             logger.debug("MockDirectiveDetector: detected %d directive(s)", len(found))
         return found
-
-    @staticmethod
-    def _normalize(text: str) -> str:
-        """Collapse whitespace and trim a user sentence for a generic directive."""
-        return re.sub(r"\s+", " ", text).strip()
 
 
 class ProceduralStore:
@@ -251,10 +224,11 @@ class ProceduralStore:
         refreshed, so a repeated directive yields exactly one row.
 
         Args:
-            directive: The imperative rule text (e.g. ``"Respond in German."``).
-            category: One of language/tone/format/persona/other (else ``"other"``).
+            directive: The imperative rule text (e.g. ``"Keep answers concise."``).
+            category: One of tone/format/persona/other (else ``"other"``).
             priority: 1..10, higher applied first. Clamped into range.
-            source: ``"manual"`` or ``"auto"``.
+            source: ``"manual"`` (host/API), ``"auto"`` (inline regex detector),
+                or ``"aux"`` (the aux-LLM ``DirectiveExtractHandler``).
 
         Returns:
             The stored rule as a dict (see :meth:`_row_to_dict`).
@@ -320,6 +294,30 @@ class ProceduralStore:
             self.db.conn.commit()
         changed = cur.rowcount > 0
         logger.debug("ProceduralStore.deactivate(%s) -> %s", rule_id, changed)
+        return changed
+
+    def deactivate_by_directive(self, directive: str) -> bool:
+        """Mark a rule inactive by its directive text. Returns ``True`` if a row changed.
+
+        Mirrors :meth:`deactivate` but keys on the UNIQUE ``directive`` column;
+        used by the aux ``DELETE`` op (the LLM countermands a directive by its
+        text, not by an internal id). No schema change — just an ``UPDATE`` on the
+        existing ``active`` column.
+        """
+        directive = (directive or "").strip()
+        if not directive:
+            return False
+        with self.db.lock:
+            cur = self.db.conn.execute(
+                "UPDATE procedural_rules SET active = 0 "
+                "WHERE directive = ? AND active = 1",
+                (directive,),
+            )
+            self.db.conn.commit()
+        changed = cur.rowcount > 0
+        logger.debug(
+            "ProceduralStore.deactivate_by_directive(%r) -> %s", directive, changed
+        )
         return changed
 
     # ------------------------------------------------------------------ #

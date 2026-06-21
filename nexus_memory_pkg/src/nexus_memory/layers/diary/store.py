@@ -1,7 +1,9 @@
-"""Persistence for the diary layer (Layer V) — the 3 tables + the outbox.
+"""Persistence for the diary layer (Layer V) — the 2 narrative tables.
 
-:class:`DiaryStore` owns the three diary tables (``diary_sessions``,
-``persistent_summary``, ``summarization_jobs``). Like the other layer stores
+:class:`DiaryStore` owns the two diary NARRATIVE tables (``diary_sessions`` and
+``persistent_summary``). The job outbox (``summarization_jobs``) is no longer
+owned here — it was lifted into the shared, layer-agnostic
+:class:`~nexus_memory.core.auxbus.bus.AuxBus`. Like the other layer stores
 (see :class:`~nexus_memory.layers.episodic.episodic.EpisodicStore`), it
 does NOT own the connection lifecycle — :class:`~nexus_memory.core.db.NexusDB`
 does. The store creates its own tables with ``CREATE TABLE IF NOT EXISTS`` on
@@ -16,10 +18,8 @@ and deterministic; it never imports or calls any LLM SDK.
 
 from __future__ import annotations
 
-import json
 import logging
-import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ...core.db import _utc_now_str
 
@@ -28,8 +28,9 @@ if TYPE_CHECKING:  # avoid an import cycle at runtime
 
 logger = logging.getLogger(__name__)
 
-# Idempotent DDL for this layer's three tables. Created on
-# construction, only ever when the diary layer is active.
+# Idempotent DDL for this layer's two NARRATIVE tables. Created on
+# construction, only ever when the diary layer is active. The job outbox
+# (summarization_jobs) lives in the shared AuxBus, not here.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS diary_sessions (
     session_id        TEXT PRIMARY KEY,      -- the orchestrator.session_id (uuid4) of the session
@@ -51,32 +52,20 @@ CREATE TABLE IF NOT EXISTS persistent_summary (
     last_session  TEXT,
     updated_at    TEXT
 );
-
-CREATE TABLE IF NOT EXISTS summarization_jobs (
-    job_id          TEXT PRIMARY KEY,        -- uuid4
-    kind            TEXT NOT NULL,           -- 'session' | 'summary'
-    target          TEXT NOT NULL,           -- session: the session_id; summary: constant '1' (singleton)
-    status          TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'done' | 'superseded'
-    prompt          TEXT NOT NULL,           -- Nexus-owned instruction (host forwards verbatim)
-    input_json      TEXT NOT NULL,           -- JSON: {prior_summary, items:[...]}
-    advance_to      INTEGER,                 -- session: covered_through to set on apply; summary: NULL
-    created_at      TEXT NOT NULL,
-    answered_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON summarization_jobs(status, created_at);
 """
 
 
 class DiaryStore:
-    """Owns the diary layer's 3 tables and all of its SQL.
+    """Owns the diary layer's 2 narrative tables and their SQL.
 
     Reads use the shared connection directly; every write is guarded by
     ``db.lock`` so it is safe alongside the semantic writer's background thread,
-    exactly like :class:`EpisodicStore`.
+    exactly like :class:`EpisodicStore`. The job outbox lives in the shared
+    :class:`~nexus_memory.core.auxbus.bus.AuxBus`, not here.
     """
 
     def __init__(self, db: "NexusDB") -> None:
-        """Create the store and ensure its three tables exist.
+        """Create the store and ensure its two narrative tables exist.
 
         Args:
             db: The shared :class:`NexusDB` (owns the connection + write lock).
@@ -89,7 +78,7 @@ class DiaryStore:
         with self.db.lock:
             self.db.conn.executescript(_SCHEMA)
             self.db.conn.commit()
-        logger.debug("DiaryStore initialized (3 tables ensured).")
+        logger.debug("DiaryStore initialized (2 narrative tables ensured).")
 
     # ================================================================== #
     # diary_sessions (per-session narrative)
@@ -281,96 +270,3 @@ class DiaryStore:
                     (summary, count, first, last, now),
                 )
             self.db.conn.commit()
-
-    # ================================================================== #
-    # summarization_jobs (outbox)
-    # ================================================================== #
-    def enqueue_job(
-        self,
-        kind: str,
-        target: str,
-        prompt: str,
-        prior_summary: str | None,
-        items: list,
-        advance_to: int | None = None,
-    ) -> str:
-        """Enqueue a pending summarization job and return its ``job_id``.
-
-        Any existing ``pending`` job with the same ``(kind, target)`` is first
-        marked ``superseded`` (the one-pending-per-target invariant). The new job
-        stores ``{"prior_summary": ..., "items": ...}`` as ``input_json``.
-        """
-        job_id = str(uuid.uuid4())
-        now = _utc_now_str()
-        input_json = json.dumps({"prior_summary": prior_summary, "items": items})
-        with self.db.lock:
-            self.db.conn.execute(
-                "UPDATE summarization_jobs SET status = 'superseded' "
-                "WHERE status = 'pending' AND kind = ? AND target = ?",
-                (kind, target),
-            )
-            self.db.conn.execute(
-                "INSERT INTO summarization_jobs "
-                "(job_id, kind, target, status, prompt, input_json, advance_to, created_at, answered_at) "
-                "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, NULL)",
-                (job_id, kind, target, prompt, input_json, advance_to, now),
-            )
-            self.db.conn.commit()
-        return job_id
-
-    def pending_jobs(self, limit: int | None = None) -> list[dict]:
-        """Return pending jobs, oldest-first (``created_at`` ASC), optional LIMIT."""
-        sql = (
-            "SELECT * FROM summarization_jobs WHERE status = 'pending' "
-            "ORDER BY created_at ASC"
-        )
-        params: tuple[Any, ...] = ()
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        rows = self.db.conn.execute(sql, params).fetchall()
-        return [self._job_row_to_dict(r) for r in rows]
-
-    def pending_summary_job(self) -> dict | None:
-        """Return the single pending ``kind='summary'`` job, if any."""
-        row = self.db.conn.execute(
-            "SELECT * FROM summarization_jobs "
-            "WHERE status = 'pending' AND kind = 'summary' "
-            "ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        return self._job_row_to_dict(row) if row is not None else None
-
-    def get_job(self, job_id: str) -> dict | None:
-        """Return the job row for ``job_id`` (with parsed ``input_obj``), or ``None``."""
-        row = self.db.conn.execute(
-            "SELECT * FROM summarization_jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
-        return self._job_row_to_dict(row) if row is not None else None
-
-    def mark_job_done(self, job_id: str) -> None:
-        """Mark a job ``done`` and stamp ``answered_at = now``."""
-        with self.db.lock:
-            self.db.conn.execute(
-                "UPDATE summarization_jobs SET status = 'done', answered_at = ? "
-                "WHERE job_id = ?",
-                (_utc_now_str(), job_id),
-            )
-            self.db.conn.commit()
-
-    # ================================================================== #
-    # helpers
-    # ================================================================== #
-    @staticmethod
-    def _job_row_to_dict(row) -> dict:
-        """Convert a job row to a dict, parsing ``input_json`` into ``input_obj``.
-
-        The raw ``input_json`` string is kept; ``input_obj`` is the parsed
-        ``{"prior_summary": ..., "items": ...}`` dict.
-        """
-        d = dict(row)
-        raw = d.get("input_json")
-        try:
-            d["input_obj"] = json.loads(raw) if raw else {}
-        except (json.JSONDecodeError, TypeError):
-            d["input_obj"] = {}
-        return d
