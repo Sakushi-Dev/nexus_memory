@@ -87,6 +87,31 @@ memory.close()
 
 A runnable version lives in [`examples/basic_usage.py`](examples/basic_usage.py); the diary handoff loop is in [`examples/diary_outbox.py`](examples/diary_outbox.py).
 
+## Live demo
+
+A runnable chat app — a terminal UI that puts Nexus to work end-to-end against a real LLM (via [OpenRouter](https://openrouter.ai)) — lives on the **`demo` branch**. Clone just that branch into its own folder and install it into a virtualenv:
+
+```powershell
+# 1. Clone only the demo branch.
+git clone --branch demo https://github.com/Sakushi-Dev/nexus_memory.git nexus-demo
+cd nexus-demo
+
+# 2. Create a virtualenv, then install the bundled module + the app's deps into it.
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .\nexus_memory_pkg
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 3. Add your OpenRouter key (get one at https://openrouter.ai/keys).
+copy .env.example .env        # then edit .env and paste your key
+
+# 4. Run — full-screen TUI (add --classic for the line UI, or --selftest for an offline check, no key needed).
+.\.venv\Scripts\python.exe chat.py
+```
+
+> **macOS/Linux:** use `./.venv/bin/python` instead of `.\.venv\Scripts\python.exe`, and `cp .env.example .env`.
+
+For semantic recall in the demo, enable the local embedder with `--embedder fastembed` (downloads a small model once, then runs offline). See the demo's own `README.md` for the model settings and the slash-command reference.
+
 ## The layer model
 
 A single `ingest` consolidates across layers, and `assemble` returns one unified, layer-aware `<memory_context>`:
