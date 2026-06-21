@@ -34,7 +34,7 @@
 
       <details class="faq-item" data-reveal>
         <summary>Which LLM providers are supported?<span class="q-ico"></span></summary>
-        <div class="a">All of them — because the module <b>never calls an LLM itself</b>. When a diary summary is due it enqueues a job into a handoff <em>outbox</em>; your host runs it on any provider (and you can point those side tasks at a separate, cheap “aux” model while a stronger model handles the chat).</div>
+        <div class="a">All of them — because the module <b>never calls an LLM itself</b>. When a background task is due — a diary summary or procedural rule extraction — it enqueues a job into a handoff <em>outbox</em>; your host runs it on any provider (and you can point those side tasks at a separate, cheap “aux” model while a stronger model handles the chat).</div>
       </details>
 
       <details class="faq-item" data-reveal>

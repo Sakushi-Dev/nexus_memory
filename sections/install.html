@@ -89,7 +89,7 @@ m = <span class="tok-f">NexusMemory</span>()
 
 <span class="tok-c"># a standing instruction is detected + persisted automatically</span>
 m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"ingest"</span>, <span class="tok-s">"interaction"</span>: {
-    <span class="tok-s">"query"</span>:    <span class="tok-s">"Always respond in German."</span>,
+    <span class="tok-s">"query"</span>:    <span class="tok-s">"Please be concise in your answers."</span>,
     <span class="tok-s">"response"</span>: <span class="tok-s">"Got it."</span>,
 }})
 m.<span class="tok-f">wait</span>()
@@ -97,7 +97,7 @@ m.<span class="tok-f">wait</span>()
 <span class="tok-c"># it returns as a directive on every assemble — inject it</span>
 <span class="tok-c"># into your system prompt and the behavior persists.</span>
 ctx = m.<span class="tok-f">process</span>({<span class="tok-s">"action"</span>: <span class="tok-s">"assemble"</span>, <span class="tok-s">"query"</span>: <span class="tok-s">"hi"</span>})
-<span class="tok-f">print</span>(ctx[<span class="tok-s">"directives"</span>])      <span class="tok-c"># ['Respond in German.']</span></code></pre>
+<span class="tok-f">print</span>(ctx[<span class="tok-s">"directives"</span>])      <span class="tok-c"># ['Keep answers concise.']</span></code></pre>
       </div>
 
       <!-- bridge: tiny JSON stdin/stdout shim -->

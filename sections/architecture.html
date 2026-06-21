@@ -33,7 +33,7 @@
           <div class="layer-num">IV<small>PROCEDURAL</small></div>
           <div class="layer-body">
             <h4>Procedural memory <span class="pill">rules</span></h4>
-            <p>Standing behavioral directives — “Respond in German.”, “Keep answers concise.” — injected so the model's <em>behavior</em> persists.</p>
+            <p>Standing behavioral directives — “Keep answers concise.”, “Address the user as Sam.” — mined from the conversation by the aux LLM (with an offline regex fallback) and injected so the model's <em>behavior</em> persists. Reply language stays the host's job, never a stored rule.</p>
           </div>
         </div>
         <div class="layer opt" style="--lc: var(--l5)">
@@ -50,7 +50,7 @@
         <p>The glue that moves information between layers so the context window stays small and salient.</p>
         <div class="xfer">
           <span class="n">01</span>
-          <div><b>Consolidation</b><p>One ingest fans out — working buffer, semantic facts, episodic log, and procedural rule detection.</p></div>
+          <div><b>Consolidation</b><p>One ingest fans out — working buffer, semantic facts, episodic log, and procedural rule extraction (aux LLM, with a regex fallback).</p></div>
         </div>
         <div class="xfer">
           <span class="n">02</span>

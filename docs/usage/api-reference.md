@@ -65,7 +65,7 @@ NexusMemory(
 ) -> None
 ```
 
-All seven parameters and their defaults:
+All eight parameters and their defaults:
 
 | Kwarg | Default | Notes |
 |-------|---------|-------|
@@ -76,6 +76,7 @@ All seven parameters and their defaults:
 | `summarizer` | `None` → `MockSummarizer()` | Episodic (Layer II) day-summary backend (offline, deterministic). |
 | `detector` | `None` → `MockDirectiveDetector()` | Mines standing behavioral rules from interactions (offline). |
 | `diary` | `None` | Optional Layer V switch. Pass `diary=True` (shorthand for `DiaryConfig(enabled=True)`) or a [`DiaryConfig`](../configuration/diary-config.md) for custom knobs; `False`/`None` leaves it off. The layer is built **only** when the resolved config is enabled — otherwise no diary tables, provider, or routing exist. |
+| `aux` | `None` → `AuxConfig()` (enabled) | **(0.6.0)** The aux-LLM background-job subsystem (`AuxConfig(enabled=True, procedural_extraction=True)`). `None`/`True` → enabled: procedural directive extraction rides the shared aux bus by default (richer, language-aware, with `ADD/UPDATE/DELETE/NOOP`), drained via `drain_aux`. `False` → disabled: procedural falls back to the inline regex `detector`. Pass an `AuxConfig` for fine control. The shared bus is constructed when `aux.enabled` **or** the diary is on; a plain `NexusMemory()` therefore now has an aux bus. |
 
 **Construction side effects.** Opens the SQLite connection (loads sqlite-vec,
 applies the schema sized to `config.dim`), builds the semantic cache, the
@@ -540,7 +541,7 @@ actions for direct programmatic use, plus the lifecycle helpers.
 
 | Method | Returns | Notes |
 |--------|---------|-------|
-| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"sessions": [...], "summary": {...} | None}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. **(0.5.1)** `inspect(type="aux")` → `{"status": "success", "data": {pending, by_kind, oldest, aux_connected, kinds_registered}}` (the background-job outbox snapshot; `aux_connected` is `True` once any job has completed), or the `aux bus not enabled` error when off. |
+| `inspect(**kw)` | inspect dict | Wraps `TransparencyInterface.inspect`. `inspect(type="diary")` → `{"status": "success", "data": {"sessions": [...], "summary": {...} | None}}`, or `{"status": "error", "error": "diary layer not enabled"}` when off. **(0.5.1)** `inspect(type="aux")` → `{"status": "success", "data": {pending, by_kind, oldest, aux_connected, kinds_registered}}` (the background-job outbox snapshot; `aux_connected` is `True` once any job has completed). **(0.6.0)** the snapshot also carries `parse_failures` (count of malformed model results dropped to all-NOOP) and, when procedural rides the bus, `procedural_via` (`"aux"` once a procedural job has completed, else `"regex-fallback"`). Returns the `aux bus not enabled` error when off. |
 | `forget(**kw)` | forget dict | Wraps `TransparencyInterface.forget` (`fact_id=` or `query=`). |
 | `pin(content, importance=10.0)` | pin dict | Wraps `TransparencyInterface.pin`. Stores a high-importance pinned fact (`metadata={"pinned": True}`). Mirrors the [`pin`](#action-pin) action. |
 | `update(target_id, new_content)` | update dict | Wraps `TransparencyInterface.update`. Replaces a fact's content and re-embeds it. Mirrors the [`update`](#action-update) action. |
