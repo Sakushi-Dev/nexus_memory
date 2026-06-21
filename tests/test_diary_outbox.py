@@ -41,10 +41,12 @@ import re
 
 import pytest
 
+from nexus_memory.core.auxbus.bus import AuxBus
 from nexus_memory.core.db import NexusDB
 from nexus_memory.core.orchestrator import NexusMemory
 from nexus_memory.layers.diary.config import DiaryConfig
-from nexus_memory.layers.diary.scheduler import DiaryScheduler
+from nexus_memory.layers.diary.handlers import DiarySessionHandler, DiarySummaryHandler
+from nexus_memory.layers.diary.scheduler import SUMMARY_TARGET, DiaryScheduler
 from nexus_memory.layers.diary.store import DiaryStore
 
 # Diary parameters: N=5, diary_window=20, max_sentences=50,
@@ -90,6 +92,21 @@ def _episodic_ddl(db: NexusDB) -> None:
         db.conn.commit()
 
 
+def _wire(db: NexusDB, cfg: DiaryConfig, session):
+    """Build the wired trio (store + bus + scheduler) with diary handlers registered.
+
+    Mirrors how :class:`DiaryLayer` wires the diary onto the shared
+    :class:`AuxBus` at construction, so the white-box unit tests exercise the
+    same path the orchestrator does.
+    """
+    store = DiaryStore(db)
+    bus = AuxBus(db)
+    scheduler = DiaryScheduler(store, bus, db, cfg, session=session)
+    bus.register(DiarySessionHandler(scheduler))
+    bus.register(DiarySummaryHandler(scheduler))
+    return store, bus, scheduler
+
+
 # A monotonic clock so inserted turns always order by id == by time.
 _CLOCK = [0]
 
@@ -120,7 +137,12 @@ def _table_names(db: NexusDB) -> set[str]:
 
 
 def _run_session(
-    db: NexusDB, scheduler: DiaryScheduler, session_id: str, *, summary: str
+    db: NexusDB,
+    bus: AuxBus,
+    scheduler: DiaryScheduler,
+    session_id: str,
+    *,
+    summary: str,
 ) -> None:
     """Drive one full session: N interactions, then submit its cadence job.
 
@@ -132,7 +154,7 @@ def _run_session(
         _interaction(db, scheduler, session_id, i)
     job = next(
         j
-        for j in scheduler.store.pending_jobs()
+        for j in bus.pending(("session", "summary"))
         if j["kind"] == "session" and j["target"] == session_id
     )
     scheduler.submit(job["job_id"], summary)
@@ -184,18 +206,17 @@ def test_off_by_default_no_diary_tables_or_jobs(db_path):
 def test_session_cadence_enqueues_after_n_interactions(db, config):
     """After N=5 interactions a session job exists: empty prior_summary, 10 turns."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
-    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), session=lambda: "s-1")
+    store, bus, scheduler = _wire(db, DiaryConfig(enabled=True), session=lambda: "s-1")
     sid = "s-1"
 
     # N-1 interactions: no job yet (counts 1..4 are not multiples of N).
     for i in range(1, N):
         _interaction(db, scheduler, sid, i)
-    assert store.pending_jobs() == []
+    assert bus.pending(("session", "summary")) == []
 
     # The Nth interaction crosses the N boundary -> exactly one pending session job.
     _interaction(db, scheduler, sid, N)
-    jobs = store.pending_jobs()
+    jobs = bus.pending(("session", "summary"))
     assert len(jobs) == 1
     job = jobs[0]
     assert job["kind"] == "session"
@@ -222,13 +243,12 @@ def test_apply_session_then_rolling_uses_prior_summary_and_overlapping_window(db
     still advances to the session's max.
     """
     _episodic_ddl(db)
-    store = DiaryStore(db)
-    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), session=lambda: "s-1")
+    store, bus, scheduler = _wire(db, DiaryConfig(enabled=True), session=lambda: "s-1")
     sid = "s-1"
 
     for i in range(1, N + 1):
         _interaction(db, scheduler, sid, i)
-    first = store.pending_jobs()[0]
+    first = bus.pending(("session", "summary"))[0]
     first_advance = first["advance_to"]
 
     # Apply the first session summary.
@@ -242,7 +262,7 @@ def test_apply_session_then_rolling_uses_prior_summary_and_overlapping_window(db
     # A second N-tick of fresh interactions -> a rolling session job.
     for i in range(N + 1, 2 * N + 1):
         _interaction(db, scheduler, sid, i)
-    second = store.pending_jobs()[0]
+    second = bus.pending(("session", "summary"))[0]
     assert second["kind"] == "session"
 
     # prior_summary == the stored summary; the window OVERLAPS — it re-sends the
@@ -268,24 +288,23 @@ def test_apply_session_then_rolling_uses_prior_summary_and_overlapping_window(db
 def test_two_ticks_before_submit_supersede_leaves_one_pending(db, config):
     """Two N-ticks before a submit: the first session job is superseded, one remains."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
-    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), session=lambda: "s-1")
+    store, bus, scheduler = _wire(db, DiaryConfig(enabled=True), session=lambda: "s-1")
     sid = "s-1"
 
     for i in range(1, N + 1):
         _interaction(db, scheduler, sid, i)
-    first_id = store.pending_jobs()[0]["job_id"]
+    first_id = bus.pending(("session", "summary"))[0]["job_id"]
 
     # A second N-tick (no submit in between) enqueues a newer session job.
     for i in range(N + 1, 2 * N + 1):
         _interaction(db, scheduler, sid, i)
 
-    pending = store.pending_jobs()
+    pending = bus.pending(("session", "summary"))
     assert len(pending) == 1
     assert pending[0]["job_id"] != first_id
 
     # The earlier job is now 'superseded'.
-    assert store.get_job(first_id)["status"] == "superseded"
+    assert bus.get_job(first_id)["status"] == "superseded"
 
 
 # --------------------------------------------------------------------------- #
@@ -294,11 +313,10 @@ def test_two_ticks_before_submit_supersede_leaves_one_pending(db, config):
 def test_rollover_finalizes_previous_session_and_enqueues_final_job(db, config):
     """Turns under s-1 then a turn under s-2 finalize s-1 + enqueue its final job."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
     # A mutable current-session pointer the scheduler reads each tick.
     current = ["s-1"]
-    scheduler = DiaryScheduler(
-        store, db, DiaryConfig(enabled=True), session=lambda: current[0]
+    store, bus, scheduler = _wire(
+        db, DiaryConfig(enabled=True), session=lambda: current[0]
     )
 
     # N interactions under s-1 -> a session job for s-1 (s-1 not yet finalized).
@@ -309,7 +327,9 @@ def test_rollover_finalizes_previous_session_and_enqueues_final_job(db, config):
     # Submit s-1's cadence job so it carries a non-empty summary (not required for
     # the rollover, but mirrors a real run).
     s1_job = next(
-        j for j in store.pending_jobs() if j["kind"] == "session" and j["target"] == "s-1"
+        j
+        for j in bus.pending(("session", "summary"))
+        if j["kind"] == "session" and j["target"] == "s-1"
     )
     scheduler.submit(s1_job["job_id"], "Session one narrative.")
 
@@ -320,7 +340,11 @@ def test_rollover_finalizes_previous_session_and_enqueues_final_job(db, config):
 
     # A final (force) session job for s-1 was enqueued by the rollover.
     final = next(
-        (j for j in store.pending_jobs() if j["kind"] == "session" and j["target"] == "s-1"),
+        (
+            j
+            for j in bus.pending(("session", "summary"))
+            if j["kind"] == "session" and j["target"] == "s-1"
+        ),
         None,
     )
     assert final is not None
@@ -334,10 +358,9 @@ def test_rollover_finalizes_previous_session_and_enqueues_final_job(db, config):
 def test_six_sessions_fold_into_single_persistent_summary(db, config):
     """6 finalized sessions -> one summary job; apply fills the single row, 6 folded."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
     current = ["s-1"]
-    scheduler = DiaryScheduler(
-        store, db, DiaryConfig(enabled=True), session=lambda: current[0]
+    store, bus, scheduler = _wire(
+        db, DiaryConfig(enabled=True), session=lambda: current[0]
     )
 
     # Drive SESSIONS_PER_SUMMARY + 1 sessions so the first 6 finalize (each by the
@@ -346,14 +369,14 @@ def test_six_sessions_fold_into_single_persistent_summary(db, config):
     for s in range(1, n_sessions + 1):
         sid = f"s-{s}"
         current[0] = sid
-        _run_session(db, scheduler, sid, summary=f"Narrative for {sid}.")
+        _run_session(db, bus, scheduler, sid, summary=f"Narrative for {sid}.")
 
     # The first SESSIONS_PER_SUMMARY sessions are finalized + unfolded -> exactly one
     # pending summary job exists.
     finalized = store.finalized_unfolded_sessions()
     assert len(finalized) >= SESSIONS_PER_SUMMARY
 
-    summary_job = store.pending_summary_job()
+    summary_job = bus.pending_one("summary", SUMMARY_TARGET)
     assert summary_job is not None
     assert summary_job["kind"] == "summary"
     assert summary_job["target"] == "1"
@@ -386,19 +409,18 @@ def test_six_sessions_fold_into_single_persistent_summary(db, config):
 def test_further_six_sessions_extend_same_persistent_summary(db, config):
     """A second batch of 6 extends the same singleton row; prior_summary flows."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
     current = ["s-1"]
-    scheduler = DiaryScheduler(
-        store, db, DiaryConfig(enabled=True), session=lambda: current[0]
+    store, bus, scheduler = _wire(
+        db, DiaryConfig(enabled=True), session=lambda: current[0]
     )
 
     # First batch: 6 sessions finalize and fold (drive a 7th to finalize the 6th).
     for s in range(1, SESSIONS_PER_SUMMARY + 2):
         sid = f"s-{s}"
         current[0] = sid
-        _run_session(db, scheduler, sid, summary=f"Narrative for {sid}.")
+        _run_session(db, bus, scheduler, sid, summary=f"Narrative for {sid}.")
 
-    first_job = store.pending_summary_job()
+    first_job = bus.pending_one("summary", SUMMARY_TARGET)
     assert first_job is not None
     scheduler.submit(first_job["job_id"], "Summary v1 (first six).")
     assert store.get_summary()["session_count"] == SESSIONS_PER_SUMMARY
@@ -409,9 +431,9 @@ def test_further_six_sessions_extend_same_persistent_summary(db, config):
     for s in range(SESSIONS_PER_SUMMARY + 2, 2 * SESSIONS_PER_SUMMARY + 3):
         sid = f"s-{s}"
         current[0] = sid
-        _run_session(db, scheduler, sid, summary=f"Narrative for {sid}.")
+        _run_session(db, bus, scheduler, sid, summary=f"Narrative for {sid}.")
 
-    second_job = store.pending_summary_job()
+    second_job = bus.pending_one("summary", SUMMARY_TARGET)
     assert second_job is not None
     # The prior persistent summary is handed back into the extension job.
     assert second_job["input_obj"]["prior_summary"] == "Summary v1 (first six)."
@@ -433,18 +455,17 @@ def test_further_six_sessions_extend_same_persistent_summary(db, config):
 def test_summary_max_sentences_formatted_into_summary_prompt(db, config):
     """The fold job's prompt carries the 300-sentence cap (no leftover braces)."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
     current = ["s-1"]
-    scheduler = DiaryScheduler(
-        store, db, DiaryConfig(enabled=True), session=lambda: current[0]
+    store, bus, scheduler = _wire(
+        db, DiaryConfig(enabled=True), session=lambda: current[0]
     )
 
     for s in range(1, SESSIONS_PER_SUMMARY + 2):
         sid = f"s-{s}"
         current[0] = sid
-        _run_session(db, scheduler, sid, summary=f"Narrative for {sid}.")
+        _run_session(db, bus, scheduler, sid, summary=f"Narrative for {sid}.")
 
-    summary_job = store.pending_summary_job()
+    summary_job = bus.pending_one("summary", SUMMARY_TARGET)
     assert summary_job is not None
     prompt = summary_job["prompt"]
     assert f"up to {SUMMARY_MAX_SENTENCES} sentences" in prompt
@@ -595,19 +616,18 @@ def test_sessions_and_persistent_summary_survive_reopen(config, db_path):
     db1 = NexusDB(config)
     try:
         _episodic_ddl(db1)
-        store1 = DiaryStore(db1)
-        scheduler1 = DiaryScheduler(store1, db1, diary_cfg, session=lambda: "s-1")
+        store1, bus1, scheduler1 = _wire(db1, diary_cfg, session=lambda: "s-1")
         for i in range(1, N + 1):
             _interaction(db1, scheduler1, "s-1", i)
 
         # One pending session job + a diary_sessions row exist.
-        assert len(store1.pending_jobs()) == 1
+        assert len(bus1.pending(("session", "summary"))) == 1
         assert store1.get_session("s-1") is not None
 
         # Also stamp the persistent_summary so both diary tables carry rows.
         folded = [{"session_id": "s-1", "summary": "x"}]
         store1.upsert_summary("A persistent summary.", folded)
-        pending_id = store1.pending_jobs()[0]["job_id"]
+        pending_id = bus1.pending(("session", "summary"))[0]["job_id"]
     finally:
         db1.close()
 
@@ -616,9 +636,10 @@ def test_sessions_and_persistent_summary_survive_reopen(config, db_path):
     db2 = NexusDB(config)
     try:
         store2 = DiaryStore(db2)  # CREATE TABLE IF NOT EXISTS -> finds existing rows.
+        bus2 = AuxBus(db2)  # the outbox lives on the bus; rebuild it on the reopen.
 
         # The pending job survived intact.
-        jobs = store2.pending_jobs()
+        jobs = bus2.pending(("session", "summary"))
         assert len(jobs) == 1
         assert jobs[0]["job_id"] == pending_id
         assert jobs[0]["kind"] == "session"
@@ -643,18 +664,17 @@ def test_sessions_and_persistent_summary_survive_reopen(config, db_path):
 def test_resubmitting_done_job_is_safe_no_op(db, config):
     """Re-submitting a 'done' job is a safe no-op (no raise); unknown id -> not_found."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
-    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), session=lambda: "s-1")
+    store, bus, scheduler = _wire(db, DiaryConfig(enabled=True), session=lambda: "s-1")
     sid = "s-1"
 
     for i in range(1, N + 1):
         _interaction(db, scheduler, sid, i)
-    job_id = store.pending_jobs()[0]["job_id"]
+    job_id = bus.pending(("session", "summary"))[0]["job_id"]
 
     # First submit applies and marks the job done.
     first = scheduler.submit(job_id, "Applied once.")
     assert first["status"] == "success"
-    assert store.get_job(job_id)["status"] == "done"
+    assert bus.get_job(job_id)["status"] == "done"
 
     # Re-submitting the SAME (now done) job is a safe no-op (no raise).
     again = scheduler.submit(job_id, "Should be ignored.")
@@ -673,20 +693,19 @@ def test_resubmitting_done_job_is_safe_no_op(db, config):
 def test_finalize_finalizes_current_session_and_force_enqueues(db, config):
     """finalize() must still enqueue a session job (force=True) despite no new turns."""
     _episodic_ddl(db)
-    store = DiaryStore(db)
-    scheduler = DiaryScheduler(store, db, DiaryConfig(enabled=True), session=lambda: "s-1")
+    store, bus, scheduler = _wire(db, DiaryConfig(enabled=True), session=lambda: "s-1")
     sid = "s-1"
 
     for i in range(1, N + 1):
         _interaction(db, scheduler, sid, i)
-    job = store.pending_jobs()[0]
+    job = bus.pending(("session", "summary"))[0]
     scheduler.submit(job["job_id"], "Covered narrative.")
     assert store.get_session(sid)["covered_through"] == job["advance_to"]
-    assert store.pending_jobs() == []
+    assert bus.pending(("session", "summary")) == []
 
     # finalize() must still enqueue a session job (force=True), despite no new
     # turns, so the finalized-but-unfolded session is never stranded.
     scheduler.finalize()
-    pend = store.pending_jobs()
+    pend = bus.pending(("session", "summary"))
     assert len(pend) == 1 and pend[0]["kind"] == "session"
     assert store.get_session(sid)["finalized"] == 1

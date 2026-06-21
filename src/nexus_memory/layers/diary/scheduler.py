@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Callable
 from .prompts import SESSION_PROMPT, SUMMARY_PROMPT
 
 if TYPE_CHECKING:  # avoid an import cycle at runtime
+    from ...core.auxbus.bus import AuxBus
     from ...core.db import NexusDB
     from .config import DiaryConfig
     from .store import DiaryStore
@@ -42,7 +43,9 @@ class DiaryScheduler:
     """Implements the §4 trigger state machine over a :class:`DiaryStore`.
 
     Args:
-        store: The diary persistence (owns the 3 tables).
+        store: The diary persistence (owns the 2 narrative tables).
+        bus: The shared :class:`~nexus_memory.core.auxbus.bus.AuxBus` (owns the job
+            outbox + dispatch).
         db: The shared :class:`NexusDB` (owns the connection + write lock).
         config: The diary layer's own :class:`DiaryConfig`.
         session: Zero-arg callable returning the current ``session_id`` (the
@@ -53,11 +56,13 @@ class DiaryScheduler:
     def __init__(
         self,
         store: "DiaryStore",
+        bus: "AuxBus",
         db: "NexusDB",
         config: "DiaryConfig",
         session: Callable[[], str],
     ) -> None:
         self.store = store
+        self.bus = bus
         self.db = db
         self.config = config
         self._session = session
@@ -166,7 +171,7 @@ class DiaryScheduler:
         advance_to = max(t["id"] for t in window)
         if not force and advance_to == row["covered_through"]:
             return  # empty-tick guard: nothing new ingested since the last apply
-        self.store.enqueue_job(
+        self.bus.enqueue(
             kind="session",
             target=session_id,
             prompt=SESSION_PROMPT.format(max_sentences=self.config.max_sentences),
@@ -179,28 +184,14 @@ class DiaryScheduler:
     # submit — routes to session/summary apply; idempotent
     # ------------------------------------------------------------------ #
     def submit(self, job_id: str, text: str) -> dict:
-        """Apply a host-supplied summary to its job; idempotent (§4.2/§4.4)."""
-        with self.db.lock:
-            job = self.store.get_job(job_id)
-            if job is None:
-                return {"status": "not_found"}
-            if job["status"] != "pending":
-                if job["status"] == "superseded":
-                    return {
-                        "status": "superseded",
-                        "applied": job["kind"],
-                        "note": "already superseded",
-                    }
-                return {
-                    "status": "success",
-                    "applied": job["kind"],
-                    "note": "already " + job["status"],
-                }
-            if job["kind"] == "session":
-                self._apply_session(job, text)
-                return {"status": "success", "applied": "session"}
-            self._apply_summary(job, text)
-            return {"status": "success", "applied": "summary"}
+        """Apply a host-supplied summary to its job; idempotent (§4.2/§4.4).
+
+        Thin delegate to :meth:`AuxBus.submit`: the idempotency + dispatch now
+        live in the bus, which routes to the registered diary handlers that call
+        back into :meth:`_apply_session` / :meth:`_apply_summary`. Kept so the
+        layer and tests keep calling ``scheduler.submit``.
+        """
+        return self.bus.submit(job_id, text)
 
     # ------------------------------------------------------------------ #
     # §4.2 — apply a session summary
@@ -209,7 +200,7 @@ class DiaryScheduler:
         """Persist a session summary; maybe trigger a summary fold (§4.2)."""
         session_id = job["target"]
         self.store.set_session_summary(session_id, text, job["advance_to"])
-        self.store.mark_job_done(job["job_id"])
+        self.bus.mark_done(job["job_id"])
         if (
             len(self.store.finalized_unfolded_sessions())
             >= self.config.sessions_per_summary
@@ -221,7 +212,7 @@ class DiaryScheduler:
     # ------------------------------------------------------------------ #
     def _enqueue_summary(self) -> None:
         """Enqueue at most ONE pending summary job; batch the next fold (§4.3)."""
-        if self.store.pending_summary_job() is not None:
+        if self.bus.pending_one("summary", SUMMARY_TARGET) is not None:
             return
         pend = self.store.finalized_unfolded_sessions()
         if len(pend) < self.config.sessions_per_summary:
@@ -232,7 +223,7 @@ class DiaryScheduler:
         items = [
             {"session_id": s["session_id"], "summary": s["summary"]} for s in batch
         ]
-        self.store.enqueue_job(
+        self.bus.enqueue(
             kind="summary",
             target=SUMMARY_TARGET,
             prompt=SUMMARY_PROMPT.format(
@@ -258,7 +249,7 @@ class DiaryScheduler:
         self.store.upsert_summary(text, folded)
         for row in folded:
             self.store.mark_folded(row["session_id"])
-        self.store.mark_job_done(job["job_id"])
+        self.bus.mark_done(job["job_id"])
 
         # Drain: another full batch of finalized-unfolded sessions may remain.
         if (

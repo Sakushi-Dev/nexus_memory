@@ -1,9 +1,11 @@
 # Design: Unified Aux-LLM Seam ("AuxBus")
 
-> **Status:** Approved design, not yet implemented. Forward-looking — this
-> document describes the target architecture, not the current code. Two core
-> decisions are locked (see [Locked decisions](#locked-decisions)); a handful of
-> details remain open (see [Open decisions](#open-decisions)).
+> **Status:** Approved design, rollout in progress. **0.5.0 shipped** (the
+> AuxBus seam + `JobHandler` registry; the diary rides the bus; new
+> `drain_aux` / `pending_aux_jobs` / `submit_aux_job` API — zero behavior
+> change). 0.5.1 (observability) and 0.6.0 (procedural-via-aux) are next. Two
+> core decisions are locked (see [Locked decisions](#locked-decisions)); a
+> handful of details remain open (see [Open decisions](#open-decisions)).
 
 ## Goal
 
@@ -296,7 +298,7 @@ Strict backward compat via kind-**pinned** thin facades + zero-DDL:
 
 | Version | Scope | DDL | Behavior change |
 |---|---|---|---|
-| **0.5.0** | Lift diary job-SQL → `core/aux/bus.py` + `JobHandler` ABC; convert apply into `DiarySessionHandler`/`DiarySummaryHandler`; add `drain_aux`/`pending_aux_jobs`/`submit_aux_job` with unknown-kind safety; `drain_diary` etc. become facades pinned to `('session','summary')`. Keep table name `summarization_jobs`. | none | none — gated by the full suite passing + a byte-identical diary-lifecycle regression test |
+| **0.5.0** ✅ shipped | Lift diary job-SQL → `core/auxbus/bus.py` + `JobHandler` ABC; convert apply into `DiarySessionHandler`/`DiarySummaryHandler`; add `drain_aux`/`pending_aux_jobs`/`submit_aux_job` with unknown-kind safety; `drain_diary` etc. stay pinned to `('session','summary')`. Keep table name `summarization_jobs`. Bus is diary-scoped at 0.5.0. | none | shipped: 223 tests green + demo diary live-run verified |
 | **0.5.1** | `inspect(type="aux")`; `{kind: run_job}` map routing; offline-contract tests (aux-disabled = permanent regex; bridge transition). No constructor `run_job`, no auto-drain. | none | additive |
 | **0.6.0** | `AuxConfig` (defaults on); `DirectiveExtractHandler` + Mem0 prompt (language excluded, regex-form cleanup DELETEs); `deactivate_by_directive()`; consolidator enqueues; regex demoted to fallback + bridge; pre-render `input_text` for all kinds; update demo to consume `input_text` + call `drain_aux`; adversarial tests; live-test in demo. | none | procedural rules now from aux by default |
 | **0.7.0+** | *(optional, only on approval)* `idx_jobs_kind` if volume warrants; cosmetic rename `summarization_jobs → aux_jobs`; retry columns; first net-new handler kind; optionally fold `/distill` onto the bus. | flagged | — |

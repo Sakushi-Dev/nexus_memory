@@ -162,15 +162,22 @@ class NexusMemory:
         # `diary` accepts a bool shorthand (`diary=True` → defaults) or a full
         # DiaryConfig for custom knobs; `diary.enabled` still gates a passed config.
         self._diary = None
+        self._aux = None
         diary_config = self._resolve_diary_config(diary)
         if diary_config is not None and diary_config.enabled:
+            from .auxbus.bus import AuxBus
             from ..layers.diary.layer import DiaryLayer
+
+            # The bus is DIARY-SCOPED at 0.5.0: constructed only when the diary is
+            # enabled, so a non-diary DB still has NO summarization_jobs table.
+            self._aux = AuxBus(self.db)
 
             diary_layer = DiaryLayer(
                 self.db,
                 self.episodic,
                 diary_config,
                 session=lambda: self.session_id,
+                aux=self._aux,
             )
             # Append AFTER episodic+procedural so the diary consolidator runs last.
             self.consolidators.append(diary_layer.consolidator)
@@ -505,6 +512,44 @@ class NexusMemory:
                     job.get("session"),
                 )
         return applied
+
+    def pending_aux_jobs(
+        self, kind: "str | None" = None, limit: int | None = None
+    ) -> list[dict] | dict:
+        """Return uniform aux-job handoff dicts across all kinds (host drains these).
+
+        Returns an error dict when the aux bus is not enabled (diary-scoped at
+        0.5.0, so disabled means the diary is off).
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled"}
+        from .auxbus.bus import AuxBus
+
+        return [AuxBus.default_handoff(j) for j in self._aux.pending(kind, limit)]
+
+    def submit_aux_job(self, job_id: str, result: str) -> dict:
+        """Hand a model output back to the aux bus; idempotent registry dispatch.
+
+        Returns an error dict when the aux bus is not enabled.
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled"}
+        return self._aux.submit(job_id, result)
+
+    def drain_aux(
+        self,
+        run_job: "Callable[[dict], str]",
+        kind: "str | None" = None,
+        limit: int | None = None,
+    ) -> dict:
+        """Drain pending aux jobs through a host model across all kinds.
+
+        Returns an error dict (with ``applied: 0``) when the aux bus is not
+        enabled.
+        """
+        if self._aux is None:
+            return {"status": "error", "error": "aux bus not enabled", "applied": 0}
+        return self._aux.drain(run_job, kind=kind, limit=limit)
 
     def forget(self, **kw: Any) -> dict:
         """Convenience wrapper around :meth:`TransparencyInterface.forget`."""
