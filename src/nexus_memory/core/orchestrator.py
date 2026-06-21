@@ -458,6 +458,10 @@ class NexusMemory:
             if self._diary is None:
                 return {"status": "error", "error": "diary layer not enabled"}
             return {"status": "success", "data": self._diary.state()}
+        if kw.get("type") == "aux":
+            if self._aux is None:
+                return {"status": "error", "error": "aux bus not enabled"}
+            return {"status": "success", "data": self._aux.stats()}
         return self.transparency.inspect(**kw)
 
     def pending_summaries(self, limit: int | None = None) -> list[dict] | dict:
@@ -538,14 +542,18 @@ class NexusMemory:
 
     def drain_aux(
         self,
-        run_job: "Callable[[dict], str]",
+        run_job: "Callable[[dict], str] | Mapping[str, Callable[[dict], str]]",
         kind: "str | None" = None,
         limit: int | None = None,
     ) -> dict:
         """Drain pending aux jobs through a host model across all kinds.
 
-        Returns an error dict (with ``applied: 0``) when the aux bus is not
-        enabled.
+        ``run_job`` is either a single ``(job) -> str`` callable, or a
+        ``{kind: callable}`` mapping for per-kind routing (with an optional
+        ``"default"`` key) — e.g. route a strict-JSON kind to a JSON-reliable
+        model without a second outbox. Returns
+        ``{"status", "applied", "skipped", "by_kind"}``, or an error dict (with
+        ``applied: 0``) when the aux bus is not enabled.
         """
         if self._aux is None:
             return {"status": "error", "error": "aux bus not enabled", "applied": 0}

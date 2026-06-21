@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..db import _utc_now_str
@@ -224,7 +225,7 @@ class AuxBus:
     # ================================================================== #
     def drain(
         self,
-        run_job: "Callable[[dict], str]",
+        run_job: "Callable[[dict], str] | Mapping[str, Callable[[dict], str]]",
         kind: str | None = None,
         limit: int | None = None,
         handoff: "Callable[[dict], dict] | None" = None,
@@ -233,16 +234,32 @@ class AuxBus:
 
         For each pending job (filtered by ``kind``, optional ``limit``): build a
         handoff dict (via ``handoff`` if supplied, else :meth:`default_handoff`),
-        call ``run_job`` on it, and submit any non-empty result. An empty result
-        leaves the job pending and logs a WARNING. Returns
+        call the resolved ``run_job`` on it, and submit any non-empty result. An
+        empty result leaves the job pending and logs a WARNING. Returns
         ``{"status": "success", "applied": int, "skipped": int, "by_kind": {...}}``.
+
+        ``run_job`` is EITHER a single ``(job) -> str`` callable used for every
+        kind, OR a ``{kind: callable}`` mapping for per-kind routing (e.g. send a
+        JSON kind to a JSON-reliable model); a ``"default"`` key covers unmapped
+        kinds. A job whose kind has no callable is skipped (left pending) with a
+        WARNING.
         """
         applied = 0
         skipped = 0
         by_kind: dict[str, int] = {}
         for raw in self.pending(kind, limit):
+            fn = self._resolve_run_job(run_job, raw["kind"])
+            if fn is None:
+                skipped += 1
+                logger.warning(
+                    "AuxBus.drain: no run_job provided for kind %r (job %r); "
+                    "skipping (left pending).",
+                    raw.get("kind", "?"),
+                    raw.get("job_id", "?"),
+                )
+                continue
             h = handoff(raw) if handoff else AuxBus.default_handoff(raw)
-            text = run_job(h)
+            text = fn(h)
             if text:
                 r = self.submit(raw["job_id"], text)
                 if r["status"] == "success":
@@ -269,8 +286,52 @@ class AuxBus:
         }
 
     # ================================================================== #
+    # observability
+    # ================================================================== #
+    def stats(self) -> dict:
+        """Return a read-only snapshot of the outbox (for ``inspect(type="aux")``).
+
+        ``{pending, by_kind, oldest, aux_connected, kinds_registered}``: the total
+        pending count and the per-kind breakdown, the oldest pending timestamp,
+        whether any job has ever completed (``aux_connected`` — so an "enabled but
+        never drained" host is visible, not silent), and the kinds that currently
+        have a registered handler. Read-only; acquires no lock.
+        """
+        rows = self.db.conn.execute(
+            "SELECT kind, COUNT(*) AS c, MIN(created_at) AS oldest "
+            "FROM summarization_jobs WHERE status = 'pending' GROUP BY kind"
+        ).fetchall()
+        by_kind = {r["kind"]: int(r["c"]) for r in rows}
+        oldest = min((r["oldest"] for r in rows), default=None)
+        done = self.db.conn.execute(
+            "SELECT 1 FROM summarization_jobs WHERE status = 'done' LIMIT 1"
+        ).fetchone()
+        return {
+            "pending": sum(by_kind.values()),
+            "by_kind": by_kind,
+            "oldest": oldest,
+            "aux_connected": done is not None,
+            "kinds_registered": sorted(self._handlers.keys()),
+        }
+
+    # ================================================================== #
     # helpers
     # ================================================================== #
+    @staticmethod
+    def _resolve_run_job(
+        run_job: "Callable[[dict], str] | Mapping[str, Callable[[dict], str]]",
+        kind: str,
+    ) -> "Callable[[dict], str] | None":
+        """Pick the callable for ``kind``.
+
+        A ``{kind: callable}`` mapping routes per kind (falling back to a
+        ``"default"`` key); a bare callable is used for every kind. Returns
+        ``None`` when a mapping has no entry for ``kind`` and no ``"default"``.
+        """
+        if isinstance(run_job, Mapping):
+            return run_job.get(kind) or run_job.get("default")
+        return run_job
+
     @staticmethod
     def default_handoff(raw: dict) -> dict:
         """Map a stored job row to a uniform, kind-agnostic handoff dict."""

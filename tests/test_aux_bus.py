@@ -97,3 +97,90 @@ def test_diary_rides_the_bus(db_path):
         assert job["kind"] == "session"
     finally:
         mem.close()
+
+
+# --------------------------------------------------------------------------- #
+# 4. inspect(type="aux") — observability snapshot (0.5.1)
+# --------------------------------------------------------------------------- #
+def _ingest_n(mem: NexusMemory, n: int) -> None:
+    for i in range(n):
+        mem.process(
+            {"action": "ingest", "interaction": {"query": f"q{i}", "response": f"a{i}"}}
+        )
+    mem.wait()
+
+
+def test_inspect_aux_stats(db_path, tmp_path):
+    """inspect(type='aux') reports pending/by_kind/oldest/aux_connected; errors when off."""
+    mem = NexusMemory(db_path=db_path, diary=DiaryConfig(enabled=True))
+    try:
+        _ingest_n(mem, 6)  # crosses the session cadence -> a pending 'session' job
+
+        res = mem.inspect(type="aux")
+        assert res["status"] == "success"
+        data = res["data"]
+        assert data["pending"] >= 1
+        assert data["by_kind"].get("session", 0) >= 1
+        assert data["oldest"] is not None
+        # No job has completed yet -> not "connected".
+        assert data["aux_connected"] is False
+        # Both diary handlers are registered on the bus.
+        assert set(("session", "summary")).issubset(set(data["kinds_registered"]))
+
+        # Drain on a deterministic mock -> a job completes -> aux_connected flips.
+        mem.drain_aux(lambda job: "A deterministic session narrative.")
+        after = mem.inspect(type="aux")["data"]
+        assert after["aux_connected"] is True
+        assert after["by_kind"].get("session", 0) == 0  # the session job was applied
+    finally:
+        mem.close()
+
+    # Non-diary instance: the bus is diary-scoped, so inspect(type='aux') errors.
+    plain = NexusMemory(db_path=str(tmp_path / "no_diary.db"))
+    try:
+        assert plain.inspect(type="aux") == {
+            "status": "error",
+            "error": "aux bus not enabled",
+        }
+    finally:
+        plain.close()
+
+
+# --------------------------------------------------------------------------- #
+# 5. drain_aux per-kind routing — {kind: run_job} map (0.5.1)
+# --------------------------------------------------------------------------- #
+def test_drain_aux_kind_routing(db_path):
+    """A {kind: run_job} map routes per kind; an unmapped kind is skipped/left pending."""
+    mem = NexusMemory(db_path=db_path, diary=DiaryConfig(enabled=True))
+    try:
+        _ingest_n(mem, 6)  # a pending 'session' job exists
+        assert mem.pending_aux_jobs(kind="session")
+
+        # Map with NO 'session' entry and NO 'default' -> the job is skipped and
+        # stays pending (never raises).
+        miss = mem.drain_aux({"summary": lambda job: "unused"})
+        assert miss["applied"] == 0
+        assert miss["skipped"] >= 1
+        assert mem.pending_aux_jobs(kind="session"), "job must remain pending"
+
+        # Map WITH a 'session' entry -> routed and applied.
+        hit = mem.drain_aux({"session": lambda job: "Routed session narrative."})
+        assert hit["applied"] == 1
+        assert hit["by_kind"].get("session") == 1
+        assert mem.pending_aux_jobs(kind="session") == []
+    finally:
+        mem.close()
+
+
+def test_drain_aux_default_route(db_path):
+    """A {'default': run_job} map catches a kind with no explicit entry."""
+    mem = NexusMemory(db_path=db_path, diary=DiaryConfig(enabled=True))
+    try:
+        _ingest_n(mem, 6)
+        assert mem.pending_aux_jobs(kind="session")
+
+        res = mem.drain_aux({"default": lambda job: "Default-routed narrative."})
+        assert res["applied"] == 1
+        assert mem.pending_aux_jobs(kind="session") == []
+    finally:
+        mem.close()
