@@ -99,7 +99,7 @@ def distill(db, procedural, detector=None) -> list[dict]:
     ...
 ```
 
-It scans up to `_DISTILL_SCAN_LIMIT = 200` semantic facts, considers only those at or above `_DISTILL_MIN_IMPORTANCE = 5.0`, runs a `DirectiveDetector` over each fact's `content`, and upserts every match into procedural memory with `source="auto"` (deduplicated by directive text). This promotes a standing preference that was only ever stored as a *fact* ("the user wants answers in German") into an actionable *behavioral directive*. It defaults to reusing the procedural store's own detector, falling back to a `MockDirectiveDetector` — it never reimplements detection. It returns the list of promoted rule dicts (empty when nothing qualifies).
+It scans up to `_DISTILL_SCAN_LIMIT = 200` semantic facts, considers only those at or above `_DISTILL_MIN_IMPORTANCE = 5.0`, runs a `DirectiveDetector` over each fact's `content`, and upserts every match into procedural memory with `source="auto"` (deduplicated by directive text). This promotes a standing preference that was only ever stored as a *fact* ("the user wants short answers") into an actionable *behavioral directive*. It defaults to reusing the procedural store's own detector, falling back to a `MockDirectiveDetector` — it never reimplements detection. It returns the list of promoted rule dicts (empty when nothing qualifies).
 
 The contrast worth remembering: **consolidators are eager, per-interaction, and inside the write thread; `distill()` is lazy, batch-oriented, and caller-triggered.**
 

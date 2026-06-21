@@ -236,8 +236,8 @@ The scoring signals and rendering are detailed in
 · **Persistence:** SQLite
 
 Procedural memory stores **directives** — standing behavioral rules that the
-agent should apply to every future response ("Respond in German.", "Keep answers
-concise.", "Address the user as Sam."). Unlike semantic facts (what is true) or
+agent should apply to every future response ("Keep answers concise.",
+"Address the user as Sam."). Unlike semantic facts (what is true) or
 episodic turns (what was said), directives encode *how to behave*, and are meant
 to be injected into the system prompt so behavior persists across sessions.
 
@@ -247,7 +247,7 @@ to be injected into the system prompt so behavior persists across sessions.
 |-------|---------|-------|
 | `procedural_rules` | `id, directive, category, priority, active, source, timestamp` | `directive` is `UNIQUE`; `priority` defaults `5`, `active` defaults `1`. Indexed `(active, priority DESC)` (`idx_procedural_active`). |
 
-Valid categories are `language`, `tone`, `format`, `persona`, `other` — anything
+Valid categories are `tone`, `format`, `persona`, `other` — anything
 else is normalized to `other`. `priority` is clamped to `1..10` (higher applied
 first). `source` is `"manual"` or `"auto"`.
 
@@ -267,21 +267,16 @@ first). `source` is `"manual"` or `"auto"`.
 `detect_and_store()` delegates to a pluggable
 [`DirectiveDetector`](../../src/nexus_memory/layers/procedural/procedural.py)
 (`detect(query, response) -> list[dict]`). The default
-**`MockDirectiveDetector`** is deterministic, offline, case-insensitive, and
-bilingual (DE + EN). It fires **only on the user's `query`** (the `response` is
+**`MockDirectiveDetector`** is deterministic, offline, and case-insensitive.
+It fires **only on the user's `query`** (the `response` is
 ignored) and recognizes:
 
 | Pattern (DE / EN) | Directive | Category | Priority |
 |-------------------|-----------|----------|----------|
-| `sprich/antworte … deutsch` | `Respond in German.` | `language` | 8 |
-| `… english/englisch …` (e.g. `answer in english`) | `Respond in English.` | `language` | 8 |
 | `fasse dich kurz` / `be concise` / `keep answers short` | `Keep answers concise.` | `tone` | 6 |
 | `nenn mich X` / `call me X` / `address me as X` | `Address the user as X.` | `persona` | 7 |
-| generic `immer/always …` or `nie/never …` | `Standing rule: <text>` | `other` | 5 |
 
-The generic always/never rule only fires when no more specific rule matched, to
-avoid noisy duplicates for the same sentence. Detection order is stable:
-language → tone → persona → generic.
+Detection order is stable: tone → persona.
 
 ---
 
@@ -336,7 +331,7 @@ verbatim, then composes the per-layer sections into one `<memory_context>`:
 ```xml
 <memory_context>
   <procedural>                                <!-- Layer IV: directives() -->
-    <directive priority="8">Respond in German.</directive>
+    <directive priority="8">Keep answers concise.</directive>
   </procedural>
   <semantic>                                  <!-- Layer III: MemoryReader -->
     <fact id="12" importance="7" score="0.83" timestamp="...">User: ...</fact>
@@ -360,7 +355,7 @@ accessor (see below). `assemble` returns a superset response:
   "status": "success",
   "context_xml": "<memory_context>...</memory_context>",
   "raw_facts": [{id, content, score, timestamp}, ...],   # Layer III, for introspection
-  "directives": ["Respond in German.", ...],             # Layer IV
+  "directives": ["Keep answers concise.", ...],          # Layer IV
   "recent_dialogue": [{role, content, timestamp}, ...],  # Layer II / I
   "meta": {"tokens_estimated", "source_count", "directive_count", "recent_count", ...},
   "latency_ms": 1.23,
@@ -387,7 +382,7 @@ read-only view over storage the two layers already own.
 
 ---
 
-## End-to-end example (the German scenario)
+## End-to-end example (the standing-request scenario)
 
 A single ingest detects a standing request (Layer IV), logs the verbatim turns
 (Layer II), and mines a semantic fact (Layer III); a later assemble surfaces the
@@ -398,14 +393,14 @@ from nexus_memory import NexusMemory
 
 m = NexusMemory(db_path="demo.db")
 m.process({"action": "ingest", "interaction": {
-    "query": "Sprich ab jetzt deutsch mit mir.",
-    "response": "Alles klar, ich antworte ab jetzt auf Deutsch.",
+    "query": "Bitte fasse dich ab jetzt kurz.",
+    "response": "Verstanden, ich fasse mich ab jetzt kurz.",
 }})
 m.wait()  # ingest is async; wait before asserting on results
 
-res = m.process({"action": "assemble", "query": "what languages do I use?"})
-assert "Respond in German." in res["directives"]   # Layer IV in action
-print(m.diary()["summary"])                          # Layer II narrative
+res = m.process({"action": "assemble", "query": "how should you answer?"})
+assert "Keep answers concise." in res["directives"]   # Layer IV in action
+print(m.diary()["summary"])                            # Layer II narrative
 m.close()
 ```
 

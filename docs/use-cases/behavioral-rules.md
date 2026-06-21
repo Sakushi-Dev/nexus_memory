@@ -1,6 +1,6 @@
 # Use Case: Behavioral Rules (Procedural Memory)
 
-This page explains how Nexus turns a standing request like *"sprich ab jetzt deutsch"* into a durable behavioral directive that is injected into every future prompt. It covers the bilingual (DE + EN) detector, auto-detection on ingest, manually authored rules, priority ordering and the injection cap, and how `distill()` promotes a recurring preference from a semantic fact into an actionable rule.
+This page explains how Nexus turns a standing request like *"fasse dich ab jetzt kurz"* into a durable behavioral directive that is injected into every future prompt. It covers the detector, auto-detection on ingest, manually authored rules, priority ordering and the injection cap, and how `distill()` promotes a recurring preference from a semantic fact into an actionable rule.
 
 Procedural memory is **Layer IV** of the [memory layering](../architecture/memory-layers.md). Where semantic facts record *what is true* and episodic turns record *what was said*, procedural rules encode *how to behave* — they are the slowest-changing, highest-leverage layer because a single rule reshapes every response. The implementation is [`layers/procedural/procedural.py`](../../src/nexus_memory/layers/procedural/procedural.py); the transfer logic that feeds it lives in [`core/consolidation.py`](../../src/nexus_memory/core/consolidation.py).
 
@@ -13,20 +13,20 @@ from nexus_memory import NexusMemory
 
 m = NexusMemory(db_path="demo.db")
 
-# The user issues a standing request in German.
+# The user issues a standing request.
 m.process({"action": "ingest", "interaction": {
-    "query": "Sprich ab jetzt deutsch mit mir.",
-    "response": "Alles klar, ich antworte ab jetzt auf Deutsch.",
+    "query": "Bitte fasse dich ab jetzt kurz.",
+    "response": "Verstanden, ich fasse mich ab jetzt kurz.",
 }})
 m.wait()                       # ingest is async — block for the consolidators
 
 # Any later assemble surfaces the directive for the system prompt.
-res = m.process({"action": "assemble", "query": "what languages do I use?"})
-assert "Respond in German." in res["directives"]
+res = m.process({"action": "assemble", "query": "how should you answer?"})
+assert "Keep answers concise." in res["directives"]
 m.close()
 ```
 
-A single `ingest` was enough: the [`ProceduralConsolidator`](../../src/nexus_memory/core/consolidation.py) ran the detector over the user's text, recognized the German-language pattern, and upserted `Respond in German.` into the `procedural_rules` table with `source="auto"`. From then on, every `assemble` includes that directive in `res["directives"]` and renders it inside the `<procedural>` block of the `<memory_context>` XML, ready to be prepended to the host's system prompt.
+A single `ingest` was enough: the [`ProceduralConsolidator`](../../src/nexus_memory/core/consolidation.py) ran the detector over the user's text, recognized the concise pattern, and upserted `Keep answers concise.` into the `procedural_rules` table with `source="auto"`. From then on, every `assemble` includes that directive in `res["directives"]` and renders it inside the `<procedural>` block of the `<memory_context>` XML, ready to be prepended to the host's system prompt.
 
 ---
 
@@ -37,8 +37,8 @@ The store owns one table, created `IF NOT EXISTS` on construction over the share
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | `INTEGER PK AUTOINCREMENT` | Stable handle used by `deactivate`. |
-| `directive` | `TEXT NOT NULL` | The imperative rule text, e.g. `"Respond in German."`. **`UNIQUE`** — the natural key. |
-| `category` | `TEXT` | One of `language`, `tone`, `format`, `persona`, `other`. Anything else is normalized to `other`. |
+| `directive` | `TEXT NOT NULL` | The imperative rule text, e.g. `"Keep answers concise."`. **`UNIQUE`** — the natural key. |
+| `category` | `TEXT` | One of `tone`, `format`, `persona`, `other`. Anything else is normalized to `other`. |
 | `priority` | `INTEGER DEFAULT 5` | `1..10`, higher applied first. Clamped into range on write. |
 | `active` | `INTEGER DEFAULT 1` | Soft-delete flag; `0` = deactivated. |
 | `source` | `TEXT` | `"auto"` (detected) or `"manual"` (host-authored). |
@@ -50,7 +50,7 @@ Because `directive` is `UNIQUE`, [`add_rule`](../../src/nexus_memory/layers/proc
 
 ---
 
-## The detector: `MockDirectiveDetector` (DE + EN)
+## The detector: `MockDirectiveDetector`
 
 [`DirectiveDetector`](../../src/nexus_memory/layers/procedural/procedural.py) is an abstract strategy with one method:
 
@@ -59,25 +59,20 @@ def detect(self, query: str, response: str) -> list[dict]:
     # -> [{"directive": str, "category": str, "priority": int}, ...]
 ```
 
-The default `MockDirectiveDetector` is deterministic, offline (no model, no network), case-insensitive, and bilingual. It only ever fires on the **user's** `query`; `response` is accepted for interface symmetry but deliberately ignored — the assistant's prose must not be able to install rules on the user's behalf.
+The default `MockDirectiveDetector` is deterministic, offline (no model, no network), and case-insensitive. It only ever fires on the **user's** `query`; `response` is accepted for interface symmetry but deliberately ignored — the assistant's prose must not be able to install rules on the user's behalf.
 
 ### Recognized patterns
 
 | User says (DE or EN) | Directive emitted | Category | Priority |
 |----------------------|-------------------|----------|----------|
-| `sprich/antworte/antwort/red/rede/schreib/schreibe … deutsch` | `Respond in German.` | `language` | 8 |
-| `sprich/antworte/antwort/red/rede/schreib/schreibe/respond/answer/reply/speak/talk/write … english\|englisch` | `Respond in English.` | `language` | 8 |
 | `fass(e)/halt(e) dich … kurz` / `be (more) concise` / `keep (it\|answers\|responses) short\|concise\|brief` | `Keep answers concise.` | `tone` | 6 |
 | `nenn(e) mich X` / `call me X` / `address me as X` | `Address the user as X.` | `persona` | 7 |
-| generic `immer/always …` or `nie/niemals/never …` | `Standing rule: <normalized sentence>` | `other` | 5 |
 
 A few specifics worth knowing, drawn straight from the regexes:
 
-- **Tolerant phrasing.** The language and concise patterns allow intervening words between the trigger and the keyword (`[^.!?\n]*`), so *"fasse dich ab jetzt bitte kurz"* and *"antworte ab jetzt auf deutsch"* both match. They stop at sentence punctuation so a directive cannot bleed across sentences.
-- **English checked first, then German.** Both language patterns are mutually specific, so an explicit *"english"* is not shadowed by a stray *deutsch* token. If a sentence somehow names both, both directives are emitted (deduplicated by text via an internal `seen` set).
+- **Tolerant phrasing.** The concise and persona patterns allow intervening words between the trigger and the keyword (`[^.!?\n]*`), so *"fasse dich ab jetzt bitte kurz"* and *"nenn mich ab jetzt Sam"* both match. They stop at sentence punctuation so a directive cannot bleed across sentences.
 - **Persona name capture.** `Address the user as X.` captures one-to-three name tokens after the trigger, allows accented characters, and trims trailing punctuation — `"call me Dr. Sam,"` → `Address the user as Dr. Sam.`.
-- **Generic always/never only as a fallback.** The `immer/always` and `nie/never` rules fire **only when nothing more specific matched**, to avoid noisy duplicate `other` rules for a sentence already captured as a language/tone/persona directive.
-- **Stable order.** Output ordering is language, tone, persona, then the generic rule.
+- **Stable order.** Output ordering is tone, then persona.
 
 To plug in a smarter (e.g. LLM-backed) detector, implement `DirectiveDetector.detect` and pass it as `NexusMemory(detector=…)`; it then drives both auto-detection on ingest and `distill()` (see below).
 
@@ -108,7 +103,7 @@ Hosts can author rules directly, bypassing detection. The `process()` action is 
 ```python
 # add (upsert)
 m.process({"action": "rule", "op": "add",
-           "directive": "Respond in German.", "category": "language", "priority": 9})
+           "directive": "Keep answers concise.", "category": "tone", "priority": 9})
 # list active rules, priority desc then newest first
 m.process({"action": "rule", "op": "list", "active_only": True})
 # soft-delete by id
@@ -151,7 +146,7 @@ When `assemble` renders the block, the [`ContextAssembler`](../../src/nexus_memo
 ```xml
 <memory_context>
   <procedural>
-    <directive priority="2">Respond in German.</directive>
+    <directive priority="2">Address the user as Sam.</directive>
     <directive priority="1">Keep answers concise.</directive>
   </procedural>
   <semantic> ... <fact id="..."/> ... </semantic>
@@ -165,7 +160,7 @@ Note the `priority` attribute here reflects the **rank within the injected set**
 
 ## Distillation: promoting a preference into a rule
 
-Sometimes a standing preference is only ever captured as a *semantic fact* — for example the user said *"I always want answers in German"* in passing and it was mined into a fact, not phrased as a direct command at the moment of an ingest. [`distill()`](../../src/nexus_memory/core/orchestrator.py) graduates such a preference into an actionable rule.
+Sometimes a standing preference is only ever captured as a *semantic fact* — for example the user said *"I always want short answers"* in passing and it was mined into a fact, not phrased as a direct command at the moment of an ingest. [`distill()`](../../src/nexus_memory/core/orchestrator.py) graduates such a preference into an actionable rule.
 
 ```python
 result = m.distill()
@@ -176,7 +171,7 @@ Under the hood, [`consolidation.distill`](../../src/nexus_memory/core/consolidat
 
 1. Scans up to `_DISTILL_SCAN_LIMIT = 200` semantic facts.
 2. Keeps only facts with `importance >= _DISTILL_MIN_IMPORTANCE` (**5.0**) — distillation only acts on the memories the system already judged significant.
-3. Reuses the **same** `DirectiveDetector` (the store's detector, falling back to a fresh `MockDirectiveDetector`) on each fact's `content`, treating the fact as a user-originated statement. So the identical DE/EN patterns drive both live ingest and distillation — no re-implementation.
+3. Reuses the **same** `DirectiveDetector` (the store's detector, falling back to a fresh `MockDirectiveDetector`) on each fact's `content`, treating the fact as a user-originated statement. So the identical patterns drive both live ingest and distillation — no re-implementation.
 4. Upserts every detected directive into the procedural store with `source="auto"`, deduplicated by directive text.
 
 It returns the list of promoted rule dicts (empty when no high-importance fact implies a standing preference). This is a deliberately lightweight, inference-free stand-in for the "fine-tune recurring facts into behavior" idea: it runs on demand (`process({"action": "distill"})` or the `distill()` wrapper), never automatically, so the host stays in control of when facts become behavior.
@@ -192,22 +187,22 @@ m = NexusMemory(db_path="demo.db", config=NexusConfig(procedural_max_directives=
 
 # auto-detected on ingest (source="auto")
 m.process({"action": "ingest", "interaction": {
-    "query": "Sprich ab jetzt deutsch und fasse dich kurz.",
+    "query": "Nenn mich Sam und fasse dich kurz.",
     "response": "Verstanden.",
 }})
 m.wait()
 
 # host-authored, high priority (source="manual")
-m.remember_rule("Address the user as Sam.", category="persona", priority=9)
+m.remember_rule("Use Markdown formatting.", category="format", priority=9)
 
 res = m.process({"action": "assemble", "query": "hallo"})
 print(res["directives"])
 # capped at 2, priority desc:
-# ['Address the user as Sam.', 'Respond in German.']   # 'Keep answers concise.' (6) drops below the cap
+# ['Use Markdown formatting.', 'Address the user as Sam.']   # 'Keep answers concise.' (6) drops below the cap
 m.close()
 ```
 
-The German and concise directives were installed by one ingest; the persona rule was added manually at priority 9; with the cap set to 2 only the two highest-priority directives reach the prompt — exactly the intended behavior for keeping a long-lived account's system prompt bounded.
+The persona (priority 7) and concise (priority 6) directives were installed by one ingest; the format rule was added manually at priority 9; with the cap set to 2 only the two highest-priority directives reach the prompt — the concise directive drops below the cap — exactly the intended behavior for keeping a long-lived account's system prompt bounded.
 
 ---
 

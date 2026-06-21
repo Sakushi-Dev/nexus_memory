@@ -231,7 +231,7 @@ Plus `INDEX idx_episodic_turns_ts(timestamp)` for time-range queries.
 
 Created on construction of
 [`ProceduralStore`](../../src/nexus_memory/layers/procedural/procedural.py).
-Standing behavioral directives ("Respond in German.", "Keep answers concise.").
+Standing behavioral directives ("Keep answers concise.", "Address the user as Sam.").
 
 **`procedural_rules`**:
 
@@ -239,7 +239,7 @@ Standing behavioral directives ("Respond in German.", "Keep answers concise.").
 | --- | --- | --- |
 | `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | Rule id. |
 | `directive` | `TEXT NOT NULL` | Imperative rule text. **`UNIQUE`** — the natural key. |
-| `category` | `TEXT` | One of `language` / `tone` / `format` / `persona` / `other`. |
+| `category` | `TEXT` | One of `tone` / `format` / `persona` / `other`. |
 | `priority` | `INTEGER DEFAULT 5` | 1..10, higher applied first (clamped on write). |
 | `active` | `INTEGER DEFAULT 1` | `1` active, `0` deactivated. |
 | `source` | `TEXT` | `'manual'` or `'auto'`. |

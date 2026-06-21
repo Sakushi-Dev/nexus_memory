@@ -172,8 +172,8 @@ A rendered context block looks like this:
 ```xml
 <memory_context>
   <procedural>
-    <directive priority="2">Respond in German.</directive>
-    <directive priority="1">Be concise.</directive>
+    <directive priority="2">Keep answers concise.</directive>
+    <directive priority="1">Address the user as Sam.</directive>
   </procedural>
   <semantic>
     <fact id="12" importance="7" score="0.83" timestamp="...">User: ...</fact>
@@ -192,7 +192,7 @@ superset, with `raw_facts` provided for introspection:
     "status": "success",
     "context_xml": "<memory_context>...</memory_context>",
     "raw_facts": [{"id": int, "content": str, "score": float, "timestamp": str}, ...],
-    "directives": ["Respond in German.", "Be concise."],
+    "directives": ["Keep answers concise.", "Address the user as Sam."],
     "recent_dialogue": [{"role": str, "content": str, "timestamp": str}, ...],
     "meta": {"tokens_estimated": int, "source_count": int,
              "directive_count": int, "recent_count": int},
@@ -299,8 +299,9 @@ network call or learned model.
 A real agent's memory is more than a flat fact store. The same `<memory_context>`
 the agent receives also carries:
 
-- **Standing behavioral rules** (Layer IV, `<procedural>`) — "Respond in
-  German.", "Be concise." — mined from interactions or pinned explicitly. See
+- **Standing behavioral rules** (Layer IV, `<procedural>`) — "Keep answers
+  concise.", "Address the user as Sam." — mined from interactions or pinned
+  explicitly. See
   [Behavioral Rules](behavioral-rules.md).
 - **Recent dialogue** (`<recent_dialogue>`) — the last few verbatim turns
   (`episodic_recent_turns`, default `6`), from the episodic store when enabled
