@@ -30,6 +30,8 @@ class Recall:
     context_xml: str
     facts: list[dict]
     directives: list[str]
+    diary: list[dict]                 # Layer V: [{session, seq, current, summary}, ...]
+    persistent_summary: dict | None   # Layer V: the single growing summary (or None)
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ class MemoryService:
         *,
         aux_llm: "LLMClient | None" = None,
         diary: bool = False,
+        embedder_backend: str = "hashing",
     ) -> "MemoryService":
         """Open (or create) the persistent store.
 
@@ -126,6 +129,7 @@ class MemoryService:
             history_truncation="tokens",     # bound history by tokens, not turn count
             history_token_budget=50_000,     # default token window (host may override)
             history_max_turns=10_000,        # candidate pool only — not the conversation limit
+            embedder_backend=embedder_backend,  # "hashing" (default) | "fastembed" (0.7.0 local)
         )
         memory = NexusMemory(db_path=db_path, config=config, diary=diary)
         return cls(memory, diary, aux_llm)
@@ -135,11 +139,13 @@ class MemoryService:
         """Assemble the layer-aware memory context for ``query``."""
         res = self._m.process({"action": "assemble", "query": query, "top_k": 5})
         if not isinstance(res, dict) or res.get("status") != "success":
-            return Recall("<memory_context></memory_context>", [], [])
+            return Recall("<memory_context></memory_context>", [], [], [], None)
         return Recall(
             res.get("context_xml", ""),
             list(res.get("raw_facts", [])),
             list(res.get("directives", [])),
+            list(res.get("diary", [])),            # Layer V (merged from the diary provider)
+            res.get("persistent_summary"),
         )
 
     def remember(self, user_text: str, assistant_text: str) -> None:
@@ -270,6 +276,41 @@ class MemoryService:
                 return ""  # empty -> the module skips this job
 
         return self._m.drain_diary(_run)
+
+    def drain_aux(
+        self,
+        run_job: "Callable[[str, str], str] | None" = None,
+        on_error: "Callable[[dict, Exception], None] | None" = None,
+    ) -> int:
+        """Drain the WHOLE aux outbox (Layer V diary + Layer IV procedural) on the
+        aux model, via the module's unified ``drain_aux``.
+
+        One uniform host callable serves every kind: it runs the job's
+        Nexus-owned ``prompt`` on the secondary model against the job's
+        pre-rendered ``input_text`` when present (procedural extraction, 0.6.0),
+        falling back to the demo's diary rendering (``prior_summary`` + ``input``)
+        for the diary kinds. Nexus still never calls an LLM — this is the host's
+        model. Returns the number of jobs applied (0 when no aux model is
+        configured or the aux bus is off).
+        """
+        if run_job is None:
+            if self._aux is None:
+                return 0
+            run_job = self._aux.complete
+
+        def _run(job: dict) -> str:
+            try:
+                text = job.get("input_text") or _render_job_input(
+                    job.get("prior_summary"), list(job.get("input", []))
+                )
+                return run_job(job["prompt"], text)
+            except Exception as exc:  # noqa: BLE001 - never break the caller
+                if on_error is not None:
+                    on_error(job, exc)
+                return ""  # empty -> the module skips this job
+
+        result = self._m.drain_aux(_run)
+        return result.get("applied", 0) if isinstance(result, dict) else 0
 
     def diary_state(self) -> dict | None:
         """``{sessions, summary}`` for the pyramid view, or ``None`` when off."""

@@ -15,6 +15,8 @@ The context (`ctx`) is duck-typed; both frontends provide:
     ctx.token_budget       -> int   (current context token window)
     ctx.last_tokens        -> int   (tokens of the last finished input)
     ctx.set_token_budget(n)-> None
+    ctx.language           -> str   (current reply-language code, e.g. "en"/"de")
+    ctx.set_language(code) -> None
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/working", "the volatile working-memory buffer (Layer I)"),
     ("/forget", "delete the fact best matching: /forget <text>"),
     ("/tokens", "show or set the context token window, e.g. /tokens 80000"),
+    ("/lang", "show or set the reply language, e.g. /lang de (default en)"),
     ("/trace", "show the last turn's module internals (X-ray)"),
     ("/clear", "clear the on-screen conversation"),
     ("/help", "show this command list"),
@@ -341,6 +344,27 @@ def _tokens(ctx, arg: str) -> Outcome:
     return Outcome(True, notice=f"context token window set to {n}.")
 
 
+def _lang(ctx, arg: str) -> Outcome:
+    from .config import LANGUAGES, resolve_language
+
+    available = ", ".join(f"{c} ({n})" for c, n in LANGUAGES.items())
+    if not arg:
+        cur = ctx.language
+        return Outcome(
+            True,
+            notice=f"reply language: {cur} ({LANGUAGES.get(cur, '?')}). "
+            f"Set with /lang <code>. Available: {available}",
+        )
+    code = resolve_language(arg)
+    if code is None:
+        return Outcome(
+            True,
+            notice=f"Unknown language {arg.strip()!r}. Available: {available}",
+        )
+    ctx.set_language(code)
+    return Outcome(True, notice=f"reply language set to {code} ({LANGUAGES[code]}).")
+
+
 def _trace(ctx, arg: str) -> Outcome:
     return Outcome(True, renderable=build_trace(list(ctx.last_trace), "last turn"))
 
@@ -367,6 +391,7 @@ _HANDLERS: dict[str, Callable] = {
     "/rule": _rule,
     "/forget": _forget,
     "/tokens": _tokens,
+    "/lang": _lang,
     "/trace": _trace,
     "/clear": _clear,
     "/help": _help,

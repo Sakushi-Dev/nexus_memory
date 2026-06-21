@@ -100,6 +100,29 @@ fallback).
 .\.venv\Scripts\python.exe chat.py --selftest
 ```
 
+**Semantic recall (optional, 0.7.0).** By default the demo uses the offline,
+dependency-free `HashingEmbedder` (lexical — it matches on shared words, so a
+paraphrased question can miss a stored fact). To enable the local **semantic**
+embedder (`fastembed` + `bge-base-en-v1.5` — downloads once, then runs offline;
+no API), set `NEXUS_EMBEDDER=fastembed` or pass `--embedder fastembed` (works for
+both the TUI and `--classic`):
+
+```powershell
+# one-time: install the optional extra
+.\.venv\Scripts\python.exe -m pip install "fastembed[cpu]"
+
+.\.venv\Scripts\python.exe chat.py --embedder fastembed
+```
+
+It fixes paraphrased recall the lexical default misses (e.g. *"what's my project's
+name?"* now finds *"I'm building a tool called Tideglass"*). Switching the embedder
+on an **existing** database needs a one-time re-index — the store refuses to mix
+vector spaces:
+
+```powershell
+.\.venv\Scripts\python.exe -m nexus_memory.reindex --db data\chat_memory.db --backend fastembed
+```
+
 The TUI keeps the conversation **pure chat** — memory, diary and trace info never
 appear on their own; you pull them on demand with a slash command. The input box
 is a multi-line editor at the bottom, the answer streams above it, and a status

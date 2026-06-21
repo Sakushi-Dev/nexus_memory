@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from . import commands, trace
-from .config import SYSTEM_PROMPT, Settings, load_settings
+from .config import SYSTEM_PROMPT, Settings, language_directive, load_settings
 from .llm import OpenRouterLLM
 from .memory import MemoryService
 from .tokens import TokenCounter
@@ -40,12 +40,13 @@ def _prompt_user() -> str:
     return console.input("[bold blue]you[/] ").strip()
 
 
-def _banner(model: str, aux_model: str, db_path: str, count, diary_on: bool) -> None:
+def _banner(model: str, aux_model: str, db_path: str, count, diary_on: bool,
+            embedder: str = "hashing") -> None:
     console.print(
         Panel.fit(
             f"[bold]Nexus Chat[/] (classic) · chat [cyan]{model}[/] · "
             f"aux [cyan]{aux_model}[/] · [green]{count}[/] facts\n"
-            f"memory at [dim]{db_path}[/]\n"
+            f"memory at [dim]{db_path}[/] · embedder [cyan]{embedder}[/]\n"
             "pure chat — type [cyan]/help[/] for commands"
             + (" · [magenta]Layer V diary on[/]" if diary_on else ""),
             border_style="bright_blue",
@@ -58,7 +59,10 @@ def _now_floor() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def build_system_prompt(directives: list[str], facts: list[dict]) -> str:
+def build_system_prompt(
+    directives: list[str], facts: list[dict], language: str = "en",
+    diary: list[dict] | None = None, persistent_summary: dict | None = None,
+) -> str:
     """Compose the system prompt from the base prompt + Nexus directives + facts.
 
     Directives (Layer IV — behavior) and recalled facts (Layer III — knowledge)
@@ -66,6 +70,10 @@ def build_system_prompt(directives: list[str], facts: list[dict]) -> str:
     The conversation itself rides as native chat messages (see build_messages),
     so we deliberately do NOT inject ``<recent_dialogue>`` here — that would
     duplicate the message history.
+
+    ``language`` pins the reply language. Its directive is appended **last** so
+    recency makes it override the English-labelled base prompt / facts above it —
+    that one line is what stops the bot drifting between German and English.
     """
     parts = [SYSTEM_PROMPT]
     if directives:
@@ -74,6 +82,25 @@ def build_system_prompt(directives: list[str], facts: list[dict]) -> str:
     if facts:
         known = "\n".join(f"- {f.get('content', '')}" for f in facts)
         parts.append("Known facts about the user:\n" + known)
+    # Layer V — the diary: the assistant's own first-person narrative of past
+    # sessions (long-term continuity). The module assembles it via the diary
+    # context provider; we surface it here so the model actually "remembers" the
+    # arc across sessions, not just the recalled facts.
+    diary_lines: list[str] = []
+    if persistent_summary and persistent_summary.get("summary"):
+        diary_lines.append("Overall so far: " + persistent_summary["summary"])
+    for d in (diary or []):
+        summary = d.get("summary")
+        if not summary:
+            continue
+        label = "This session" if d.get("current") else f"Earlier session {d.get('seq')}"
+        diary_lines.append(f"{label}: {summary}")
+    if diary_lines:
+        parts.append(
+            "Your diary (your own notes on past sessions — use them for continuity):\n"
+            + "\n".join(diary_lines)
+        )
+    parts.append(language_directive(language))
     return "\n\n".join(parts)
 
 
@@ -84,6 +111,7 @@ def build_messages(
     counter: "TokenCounter",
     budget: int,
     floor: str | None = None,
+    language: str = "en",
 ) -> tuple[list[dict], int]:
     """Assemble the message list for one turn, bounded by a TOKEN window.
 
@@ -95,7 +123,10 @@ def build_messages(
     reserved, the remainder funds the history. ``floor`` (set by /clear) hides
     turns at/older than that timestamp. Returns ``(messages, total_tokens)``.
     """
-    system_content = build_system_prompt(recall.directives, recall.facts)
+    system_content = build_system_prompt(
+        recall.directives, recall.facts, language,
+        recall.diary, recall.persistent_summary,
+    )
     reserve = counter.count_messages(
         [
             {"role": "system", "content": system_content},
@@ -133,6 +164,8 @@ class ChatApp:
         self.counter = TokenCounter(settings.model)
         self.token_budget = settings.token_window
         self.last_tokens = 0
+        # Reply language is mutable at runtime (/lang); seeded from settings.
+        self.language = settings.language
 
     # --- ctx interface used by commands.dispatch ------------------------- #
     def clear_screen(self) -> None:
@@ -143,6 +176,9 @@ class ChatApp:
     def set_token_budget(self, n: int) -> None:
         self.token_budget = n
 
+    def set_language(self, code: str) -> None:
+        self.language = code
+
     # --- loop ------------------------------------------------------------ #
     def run(self) -> int:
         trace.enable(self.settings.trace_on)  # --notrace starts with the X-ray off
@@ -152,6 +188,7 @@ class ChatApp:
             self.settings.db_path,
             self.memory.health().get("count", "?"),
             self.memory.diary_enabled,
+            self.settings.embedder_backend,
         )
         try:
             while True:
@@ -184,7 +221,7 @@ class ChatApp:
         recall = self.memory.recall(user_text)
         messages, self.last_tokens = build_messages(
             self.memory, recall, user_text,
-            self.counter, self.token_budget, self.history_floor,
+            self.counter, self.token_budget, self.history_floor, self.language,
         )
         _info(f"[dim]· {self.last_tokens}/{self.token_budget} tokens in context[/]")
 
@@ -204,8 +241,10 @@ class ChatApp:
         self.memory.flush()
         self.last_trace = trace.handler().drain()
 
-        if self.memory.diary_enabled:
-            self.memory.drain_diary()  # runs on the aux model; view it with /pyramid
+        # Drain the aux outbox on the aux model: Layer V diary (view with /pyramid)
+        # AND Layer IV procedural extraction (0.6.0). Runs even without the diary,
+        # since procedural now rides the same bus by default.
+        self.memory.drain_aux()
 
 
 # --------------------------------------------------------------------------- #
@@ -215,7 +254,10 @@ def build_live_app(settings: Settings) -> ChatApp:
     """Wire the live classic application (raises on a missing API key)."""
     llm = OpenRouterLLM(settings)                            # primary: the chat response
     aux = OpenRouterLLM(settings, model=settings.aux_model)  # secondary: side tasks
-    memory = MemoryService.open(settings.db_path, aux_llm=aux, diary=settings.diary_on)
+    memory = MemoryService.open(
+        settings.db_path, aux_llm=aux, diary=settings.diary_on,
+        embedder_backend=settings.embedder_backend,
+    )
     return ChatApp(settings, llm, memory)
 
 

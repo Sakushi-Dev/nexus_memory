@@ -48,7 +48,7 @@ def run_selftest() -> int:
             ("My name is Sai and I live in Berlin.", "Nice to meet you, Sai!"),
             ("I'm building a local memory library called Nexus.", "Sounds great."),
             ("I prefer Python and I use Windows 11.", "Noted."),
-            ("Sprich ab jetzt deutsch mit mir.", "Alles klar, ich antworte ab jetzt auf Deutsch."),
+            ("Bitte fasse dich ab jetzt kurz.", "Alles klar, ich halte mich ab jetzt kurz."),
             ("Ich arbeite am liebsten abends.", "Gut zu wissen — abends also."),
         ]
         for q, a in turns:
@@ -65,11 +65,12 @@ def run_selftest() -> int:
             Panel(recall.context_xml or "[empty]", title="context_xml injected into the prompt", border_style="cyan")
         )
 
-        # --- Layer IV (procedural): the German directive must be recalled -----
+        # --- Layer IV (procedural): the standing "be concise" directive must be recalled.
+        # (Reply language is intentionally NOT a procedural directive — the host owns it.)
         console.print("\n[bold]Procedural directives recalled:[/]")
         console.print(commands.build_rules(memory.rules()))
-        assert any("german" in d.lower() for d in recall.directives), (
-            f"expected a 'Respond in German.' directive, got {recall.directives!r}"
+        assert any("concise" in d.lower() for d in recall.directives), (
+            f"expected a 'Keep answers concise.' directive, got {recall.directives!r}"
         )
 
         # --- Layer I (working): volatile buffer holds the recent turns --------

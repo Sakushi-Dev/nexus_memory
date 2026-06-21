@@ -109,6 +109,8 @@ class NexusTUI(App):
         self.counter = TokenCounter(settings.model)
         self.token_budget = settings.token_window
         self.last_tokens = 0
+        # Reply language is mutable at runtime (/lang); seeded from settings.
+        self.language = settings.language
 
     # ------------------------------------------------------------------ #
     # composition / lifecycle
@@ -146,6 +148,10 @@ class NexusTUI(App):
 
     def set_token_budget(self, n: int) -> None:
         self.token_budget = n
+        self._refresh_status()
+
+    def set_language(self, code: str) -> None:
+        self.language = code
         self._refresh_status()
 
     # ------------------------------------------------------------------ #
@@ -229,7 +235,7 @@ class NexusTUI(App):
         recall = self.memory.recall(user_text)
         messages, self.last_tokens = build_messages(
             self.memory, recall, user_text,
-            self.counter, self.token_budget, self.history_floor,
+            self.counter, self.token_budget, self.history_floor, self.language,
         )
         self.call_from_thread(self._refresh_status)  # show the finished input's token size
 
@@ -292,6 +298,7 @@ class NexusTUI(App):
         self.query_one("#status", Static).update(
             f" chat {self.settings.model} · aux {self.settings.aux_model} · "
             f"{facts} facts · diary {diary} · {pending} pending · "
+            f"lang {self.language} · "
             f"ctx {approx}{self.last_tokens}/{self.token_budget} tok · /help"
         )
 
@@ -314,7 +321,10 @@ def run_tui(settings: Settings) -> int:
         print(f"Config error: {exc}")
         return 2
     aux = OpenRouterLLM(settings, model=settings.aux_model)  # secondary: side tasks
-    memory = MemoryService.open(settings.db_path, aux_llm=aux, diary=settings.diary_on)
+    memory = MemoryService.open(
+        settings.db_path, aux_llm=aux, diary=settings.diary_on,
+        embedder_backend=settings.embedder_backend,
+    )
     try:
         NexusTUI(settings, llm, memory).run()
     finally:
