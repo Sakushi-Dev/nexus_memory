@@ -18,14 +18,19 @@ A **local-first**, dependency-light agent-memory library for Python. It gives an
 
 ## Install
 
-Clone the repo and install it into your Python with `pip`. Requires Python ≥ 3.11.
+Clone the repo, create a virtual environment, and install it editable with `pip`. Requires Python ≥ 3.11.
 
 ```sh
 # 1. Get the code.
 git clone https://github.com/Sakushi-Dev/nexus_memory.git
 cd nexus_memory
 
-# 2. Install the package (editable, so source edits take effect immediately).
+# 2. Create and activate a virtual environment (recommended).
+python -m venv .venv
+.venv\Scripts\Activate.ps1        # Windows (PowerShell)  ·  cmd.exe: .venv\Scripts\activate.bat
+# source .venv/bin/activate       # macOS / Linux
+
+# 3. Install the package editable, into the active venv (source edits take effect immediately).
 pip install -e .
 ```
 
@@ -37,12 +42,12 @@ import nexus_memory  # importable after `pip install -e .`
 
 > **Multiple Pythons?** `pip` installs into the interpreter it belongs to. To target a specific one (e.g. the one your editor runs), call pip through it: `path/to/python.exe -m pip install -e .`
 
-The optional embedder backends are extras — install what you need:
+The default install is fully offline (the lexical `HashingEmbedder`). For semantic recall and other backends, install the optional extras into the **same activated venv** — only what you need:
 
 ```sh
-pip install -e ".[local-embeddings]"         # local semantic embedder (fastembed + bge-base, offline)
-pip install -e ".[sentence-transformers]"    # SentenceTransformer embedder
-pip install -e ".[openai]"                   # OpenAI embedder
+pip install -e ".[local-embeddings]"         # local semantic embedder (fastembed + bge-base, offline after one download)
+pip install -e ".[sentence-transformers]"    # SentenceTransformer embedder (heavier; needs torch)
+pip install -e ".[openai]"                   # OpenAI embedder (external API)
 ```
 
 See [Embedders](docs/usage/embedders.md) for details.
