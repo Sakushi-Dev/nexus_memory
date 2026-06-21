@@ -23,6 +23,10 @@ All defaults are copied verbatim from the dataclass definition. `DEFAULT_DIM` is
 |-------|------|---------|----------|
 | `db_path` | `str` | `"nexus_memory.db"` | SQLite database file path. **Overridden by the `db_path` constructor kwarg** (see below). |
 | `dim` | `int` | `768` (`DEFAULT_DIM`) | Embedding vector dimension. Must match the active embedder; fixed at table creation (see [`dim` is locked](#dim-is-locked-at-table-creation)). |
+| `embedder_backend` | `str` | `"hashing"` | **(0.7.0)** Which embedder to build when none is injected: `"hashing"` (default, lexical, zero-dep) or `"fastembed"` (local semantic, opt-in `nexus-memory[local-embeddings]`). See [Embedders](../usage/embedders.md). |
+| `embedder_model` | `str \| None` | `None` | **(0.7.0)** Override the backend's default model. `None` uses the backend default (`BAAI/bge-base-en-v1.5`, 768-dim, for fastembed). |
+| `embedder_cache_dir` | `str \| None` | `None` | **(0.7.0)** Where a downloaded local model is cached; `None` uses the default cache location. |
+| `embedder_offline` | `bool` | `False` | **(0.7.0)** Require a warm model cache and never hit the network; raises an actionable error if the model is missing offline. |
 | `decay_lambda` | `float` | `0.01` | Time-decay rate per day in scoring: `exp(-decay_lambda * days_passed)`. Higher → older facts fade faster. |
 | `min_score` | `float` | `0.6` | Default retrieval score floor for `assemble`. Facts below this combined score are dropped. Overridable per request. |
 | `default_top_k` | `int` | `5` | Default number of facts retrieved per `assemble` query. Overridable per request via `top_k`. |

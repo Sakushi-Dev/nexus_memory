@@ -34,7 +34,8 @@ from .consolidation import (
 )
 from .context import ContextAssembler
 from .db import NexusDB
-from .embeddings import Embedder, HashingEmbedder
+from .embeddings import Embedder, FastEmbedEmbedder, HashingEmbedder
+from . import provenance
 from ..layers.episodic.episodic import EpisodicStore
 from ..layers.semantic.extraction import FactExtractor, MockFactExtractor, SpeakerAwareExtractor
 from .models import parse_request
@@ -54,6 +55,27 @@ logger = logging.getLogger(__name__)
 # embedding + a single KNN dedup probe per extracted fact; this is a coarse,
 # non-binding estimate, not a measured value.
 _INGEST_ESTIMATE_MS = 50
+
+
+# ===================================================================== #
+# Declarative embedder construction (0.7.0)
+# ===================================================================== #
+def _build_embedder(config: NexusConfig) -> Embedder:
+    """Construct the embedder declaratively from ``config.embedder_backend``.
+
+    ``"fastembed"`` -> :class:`FastEmbedEmbedder` (default model
+    ``BAAI/bge-base-en-v1.5``, honouring ``embedder_model`` /
+    ``embedder_cache_dir`` / ``embedder_offline``); anything else -> the
+    zero-dependency :class:`HashingEmbedder` sized to ``config.dim``. An explicit
+    ``embedder=`` passed to :class:`NexusMemory` bypasses this and always wins.
+    """
+    if config.embedder_backend == "fastembed":
+        return FastEmbedEmbedder(
+            config.embedder_model or "BAAI/bge-base-en-v1.5",
+            cache_dir=config.embedder_cache_dir,
+            offline=config.embedder_offline,
+        )
+    return HashingEmbedder(dim=config.dim)
 
 
 def _today_str() -> str:
@@ -125,14 +147,33 @@ class NexusMemory:
             config.db_path = db_path
         self.config = config
 
-        # Default to the dependency-free hashing embedder, sized to the config.
-        self.embedder: Embedder = embedder or HashingEmbedder(dim=config.dim)
+        # Embedder: an explicit `embedder=` always wins; otherwise build it
+        # declaratively from the config (hashing default; opt-in fastembed). The
+        # default path is byte-identical to the pre-0.7.0 HashingEmbedder wiring.
+        self.embedder: Embedder = embedder or _build_embedder(config)
 
         # Storage + cache.
         self.db = NexusDB(config)
         self.cache = SemanticCache(
             maxsize=config.cache_size, threshold=config.cache_threshold
         )
+
+        # --- embedder dim guard + provenance (0.7.0) ---------------------- #
+        # Guard against the REAL stored vector dim (provenance row if present,
+        # else config.dim for a fresh DB) — this covers BOTH the injected
+        # (`embedder=`) and the config-built paths. A mismatched embedder must
+        # never reach a write.
+        real_dim = provenance.stored_dim(self.db, fallback=config.dim)
+        if int(self.embedder.dim) != int(real_dim):
+            raise ValueError(
+                f"embedder dim {self.embedder.dim} != DB dim {real_dim}; pick a "
+                f"{real_dim}-dim model or run python -m nexus_memory.reindex"
+            )
+        # Reconcile provenance: stamp a fresh DB, accept a matching one, and
+        # refuse a different backend/model (no silent vector-space mixing). On a
+        # fresh stamp, flush the read cache so nothing stale survives.
+        if provenance.reconcile(self.db, self.embedder):
+            self.cache.clear()
 
         # Privacy filter (shared with the writer for pre-embedding masking).
         self.pii_filter = PIIFilter(enabled=config.pii_filter_enabled)
