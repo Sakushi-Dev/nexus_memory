@@ -57,5 +57,17 @@
 
   <script src="js/md.js"></script>
   <script src="js/docs.js"></script>
+
+  <!-- Mermaid: render ```mermaid fenced blocks in the docs (data-flow diagrams).
+       Loaded as a module from a CDN (like the web fonts); the docs viewer calls
+       window.__renderMermaid() after each markdown render. -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', fontFamily: 'inherit' });
+    window.__renderMermaid = function () {
+      try { mermaid.run(); } catch (e) { console.warn('mermaid render failed', e); }
+    };
+    window.__renderMermaid();  // render whatever the viewer already injected
+  </script>
 </body>
 </html>

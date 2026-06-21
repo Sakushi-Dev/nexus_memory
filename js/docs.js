@@ -166,6 +166,7 @@ async function render({ id, anchor }) {
       if (!res.ok) throw new Error(res.status);
       content.innerHTML = window.mdToHtml(await res.text());
       rewriteLinks(content, doc);
+      if (window.__renderMermaid) window.__renderMermaid();  // render any ```mermaid diagrams
     } catch (err) {
       content.innerHTML = `<h1>Couldn't load this doc</h1>
         <p>Failed to fetch <code>docs/${esc(doc.file)}</code> (${esc(String(err))}). Are you serving over HTTP?
