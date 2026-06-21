@@ -1,6 +1,6 @@
 # Embedders
 
-This page explains how Nexus Memory turns text into vectors: the [`Embedder`](../../src/nexus_memory/core/embeddings.py) abstract base class and its contract, the default dependency-free [`HashingEmbedder`](../../src/nexus_memory/core/embeddings.py), and the two optional, lazily-imported adapters ([`SentenceTransformerEmbedder`](../../src/nexus_memory/core/embeddings.py), [`OpenAIEmbedder`](../../src/nexus_memory/core/embeddings.py)) — including which dependencies they need, how their dimensions are determined, and the privacy implications of sending text to an external API.
+This page explains how Nexus Memory turns text into vectors: the [`Embedder`](../../src/nexus_memory/core/embeddings.py) abstract base class and its contract, the default dependency-free [`HashingEmbedder`](../../src/nexus_memory/core/embeddings.py), and the optional, lazily-imported adapters — the **recommended local semantic** [`FastEmbedEmbedder`](../../src/nexus_memory/core/embeddings.py) (0.7.0, provider-agnostic: downloads a model once, then runs offline), plus [`SentenceTransformerEmbedder`](../../src/nexus_memory/core/embeddings.py) and [`OpenAIEmbedder`](../../src/nexus_memory/core/embeddings.py) — including which dependencies they need, how their dimensions are determined, and the privacy implications of sending text to an external API. **(0.7.0)** you can also select a backend declaratively via `NexusConfig(embedder_backend=…)` and re-embed an existing store with `python -m nexus_memory.reindex`.
 
 All embedding code lives in [`src/nexus_memory/core/embeddings.py`](../../src/nexus_memory/core/embeddings.py).
 
@@ -76,7 +76,31 @@ Because the signal is lexical rather than semantic, `HashingEmbedder` retrieves 
 
 ## Optional adapters
 
-Both adapters are **lazily imported**: their third-party dependency is only imported inside `__init__`, never at package import time. If the dependency is missing, the constructor raises a helpful `ImportError` telling you exactly which extra to install.
+These adapters are **lazily imported**: their third-party dependency is only imported inside `__init__`, never at package import time. If the dependency is missing, the constructor raises a helpful `ImportError` telling you exactly which extra to install.
+
+### `FastEmbedEmbedder` *(recommended local semantic — 0.7.0)*
+
+A **provider-agnostic, local** semantic embedder built on [`fastembed`](https://github.com/qdrant/fastembed) (ONNX Runtime — **no PyTorch**). It downloads a small model once (default `BAAI/bge-base-en-v1.5`, ~210 MB) and then runs fully **offline** on CPU (a few ms per text). Unlike `HashingEmbedder`, it matches on *meaning*: a paraphrased query retrieves facts that share no words (e.g. *"what's my project's name?"* finds *"I'm building a tool called Tideglass"*, which the lexical default misses).
+
+Its default model is **768-dimensional — the same as `DEFAULT_DIM`** — so adopting it on a fresh store needs **no schema/dim change**, and migrating an existing store is a pure [re-embed](#switching-embedders--re-indexing).
+
+```python
+from nexus_memory import NexusMemory, NexusConfig
+
+# Declarative (recommended): pick the backend in config.
+memory = NexusMemory("agent.db", config=NexusConfig(embedder_backend="fastembed"))
+
+# …or inject the adapter explicitly:
+from nexus_memory.core.embeddings import FastEmbedEmbedder
+memory = NexusMemory("agent.db", embedder=FastEmbedEmbedder())
+```
+
+- **Install:** `pip install "nexus-memory[local-embeddings]"` (pulls `fastembed[cpu]`). Missing → `ImportError` with that hint.
+- **Constructor:** `FastEmbedEmbedder(model_name="BAAI/bge-base-en-v1.5", *, cache_dir=None, offline=False, **kwargs)`.
+- **Config knobs (0.7.0):** `embedder_backend` (`"hashing"|"fastembed"`), `embedder_model`, `embedder_cache_dir`, `embedder_offline`.
+- **Dimension:** probed from the model (`emb.dim` == 768 for bge-base); the dim guard enforces it against the store.
+- **Offline:** the first construction downloads the model (a one-line log notes the size + cache dir); afterwards no network is used. With `embedder_offline=True` and no warm cache it raises an actionable error.
+- **Normalization:** vectors are returned L2-normalized (bge `*-en-v1.5` is already normalized; the adapter normalizes once, idempotently).
 
 ### `SentenceTransformerEmbedder`
 
@@ -116,6 +140,18 @@ memory = NexusMemory(db_path="agent.db", config=cfg, embedder=emb)
 - **Dimension:** defaults to `1536`, configurable via the `dim` argument; the same value is passed to the API as the `dimensions` parameter. Keep `config.dim` equal to it.
 - **Normalization:** the raw API embedding is L2-normalized by the adapter before it is returned.
 - **Install:** `pip install -e ".[openai]"` (or `pip install openai`). Missing → `ImportError` with that hint.
+
+## Switching embedders / re-indexing
+
+Each embedder produces vectors in its *own* space, so switching backend (or model, or dimension) invalidates every stored vector — the existing facts must be **re-embedded**. Nexus refuses to silently mix spaces: it records the embedder *provenance* (backend + model + dim) in the store's `system_config` and errors if you open it with a different embedder than it was written with.
+
+Re-embed an existing store with the bundled tool:
+
+```bash
+python -m nexus_memory.reindex --db agent.db --backend fastembed
+```
+
+For the recommended **same-dimension** path (the default `HashingEmbedder` and `bge-base-en-v1.5` are both 768), this recomputes every fact's vector and rewrites the provenance **in a single transaction** — no schema change, no data loss. Switching to a *different* dimension is a larger, schema-affecting migration and is out of scope for the bundled same-dim tool.
 
 ## PII guidance for external APIs
 
@@ -157,7 +193,8 @@ See [Extension points](../architecture/extension-points.md) for the other plugga
 | Embedder | Constructor | `dim` | Dependencies | Best for |
 |----------|-------------|-------|--------------|----------|
 | `HashingEmbedder` *(default)* | `HashingEmbedder(dim=DEFAULT_DIM)` | `768` (configurable) | none — deterministic, offline | offline use, tests, lexical-overlap retrieval |
-| `SentenceTransformerEmbedder` | `SentenceTransformerEmbedder(model_name="all-mpnet-base-v2", **kwargs)` | from the model (`emb.dim`) | `sentence-transformers` (lazy; `ImportError` if missing) | local semantic retrieval, no external API |
+| `FastEmbedEmbedder` *(recommended semantic)* | `FastEmbedEmbedder(model_name="BAAI/bge-base-en-v1.5", …)` or `NexusConfig(embedder_backend="fastembed")` | `768` (bge-base; matches the default — no schema change) | `fastembed[cpu]` (lazy; ONNX, no torch) | **local semantic retrieval**, provider-agnostic, offline after a one-time download |
+| `SentenceTransformerEmbedder` | `SentenceTransformerEmbedder(model_name="all-mpnet-base-v2", **kwargs)` | from the model (`emb.dim`) | `sentence-transformers` (lazy; `ImportError` if missing) | local semantic retrieval (heavier; needs torch) |
 | `OpenAIEmbedder` | `OpenAIEmbedder(model="text-embedding-3-small", dim=1536, **kwargs)` | `1536` (configurable) | `openai` (lazy; `ImportError` if missing) | hosted semantic embeddings (enable PII masking) |
 
 > **Keep `dim` in sync.** `config.dim` is locked at table creation. Decide on your embedder and dimension before the first run; changing dimension later requires a re-embed/migration.

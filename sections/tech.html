@@ -16,7 +16,7 @@
     <div class="tech-list" data-reveal>
       <div class="tech-item"><span class="ic">◆</span><div><b>vec0 KNN, cosine</b> <span>— `WHERE embedding MATCH ? AND k = ?` over a sqlite-vec virtual table.</span></div></div>
       <div class="tech-item"><span class="ic">◆</span><div><b>HashingEmbedder</b> <span>— blake2b feature hashing, L2-normalized, deterministic &amp; offline by default.</span></div></div>
-      <div class="tech-item"><span class="ic">◆</span><div><b>Pluggable embedders</b> <span>— lazy SentenceTransformer / OpenAI adapters when you want them.</span></div></div>
+      <div class="tech-item"><span class="ic">◆</span><div><b>Pluggable embedders</b> <span>— an opt-in local semantic <b>FastEmbedEmbedder</b> (fastembed/ONNX, no torch, offline after one download) for paraphrase-aware recall; plus lazy SentenceTransformer / OpenAI adapters.</span></div></div>
       <div class="tech-item"><span class="ic">◆</span><div><b>Async write pipeline</b> <span>— extract → PII-mask → embed → KNN dedup → store, off the caller's thread.</span></div></div>
       <div class="tech-item"><span class="ic">◆</span><div><b>Speaker-aware extraction</b> <span>— facts know who said them; the assistant's prose stays in the diary.</span></div></div>
       <div class="tech-item"><span class="ic">◆</span><div><b>WAL concurrency</b> <span>— a shared re-entrant write lock serializes commits across layer stores.</span></div></div>

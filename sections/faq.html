@@ -24,7 +24,12 @@
 
       <details class="faq-item" data-reveal>
         <summary>Does Nexus need an API key or internet?<span class="q-ico"></span></summary>
-        <div class="a">No. The default path is fully offline: a single local <code>.db</code> file (SQLite + sqlite-vec) and a deterministic, dependency-free hashing embedder — <b>no server, no model download</b>. External embedders or an LLM for the diary are entirely optional.</div>
+        <div class="a">No. The default path is fully offline: a single local <code>.db</code> file (SQLite + sqlite-vec) and a deterministic, dependency-free hashing embedder — <b>no server, no model download</b>. Want semantic recall? Drop in the optional <b>local</b> embedder (<code>fastembed</code> + a small open model): it downloads once, then runs <b>offline</b> on CPU — so you stay vendor-free. An LLM for the diary / procedural side tasks is also optional, on any provider you choose.</div>
+      </details>
+
+      <details class="faq-item" data-reveal>
+        <summary>Can it recall a fact when I ask in different words?<span class="q-ico"></span></summary>
+        <div class="a">Yes — with the optional <b>local semantic embedder</b> (0.7.0). The zero-dependency default matches on shared words, so it can miss paraphrases. Switch on the local <code>fastembed</code> embedder (<code>pip install "nexus-memory[local-embeddings]"</code>) and <i>"what's my project's name?"</i> retrieves <i>"I'm building a tool called Tideglass"</i> with no words in common — all on-device, no API. Switching is a one-command re-index.</div>
       </details>
 
       <details class="faq-item" data-reveal>
